@@ -13,8 +13,10 @@ use tracing_subscriber::EnvFilter;
 use lattice_agents::{AgentRegistry, QueueConfig, QueueEngine};
 use lattice_store::filestore::FileStore;
 use lattice_store::paths::Paths;
-use lattice_store::store::{Projects, SettingsStore};
+use lattice_store::store::{Projects, SettingsStore, Templates};
 use lattice_tui::{App, AppContext};
+
+mod default_templates;
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
@@ -27,6 +29,20 @@ async fn main() -> Result<()> {
 
     // Build the file-backed store (no SQLite — flat TOML + atomic writes).
     let store: Arc<FileStore> = Arc::new(FileStore::new(paths.clone()));
+
+    // Seed built-in templates on first run (templates dir is empty).
+    match <FileStore as Templates>::list(&store).await {
+        Ok(existing) if existing.is_empty() => {
+            let now = lattice_core::time::Timestamp::now();
+            for t in default_templates::default_templates(now) {
+                if let Err(e) = <FileStore as Templates>::save(&*store, &t).await {
+                    tracing::warn!("seed default template failed: {e}");
+                }
+            }
+        }
+        Ok(_) => {}
+        Err(e) => tracing::warn!("templates.list on boot: {e}"),
+    }
 
     // Load settings — the defaults kick in when `settings.toml` is
     // missing on first run.

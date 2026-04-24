@@ -133,15 +133,9 @@ description = "Refactor a Rust module for readability + tests."
 created_at = "2026-03-10T14:00:00Z"
 updated_at = "2026-04-20T09:00:00Z"
 
-[preamble]
-markdown = """
-You are working on a Rust codebase. Follow the project's existing style.
-Run `cargo fmt` and `cargo clippy` before reporting completion.
-"""
-
 [[fields]]
 id       = "module_path"
-kind     = "file_picker"
+kind     = "textarea"
 label    = "Target module"
 required = true
 [fields.validation]
@@ -152,7 +146,8 @@ regex = "^src/.*\\.rs$"
 [prompt]
 template = """
 ## Context
-{{ preamble }}
+You are working on a Rust codebase. Follow the project's existing style.
+Run `cargo fmt` and `cargo clippy` before reporting completion.
 
 ## Target
 Project: `{{ project.name }}` at `{{ project.path }}`
@@ -390,8 +385,7 @@ v0.4 when the template schema evolves.
 
 - A typical project file: < 2 KiB.
 - A typical template: < 20 KiB.
-- A typical task: < 10 KiB (excluding component JSON which can push
-  higher).
+- A typical task: < 10 KiB.
 - A typical run: tens of KB metadata + up to MBs of logs.
 
 Targets:

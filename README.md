@@ -15,7 +15,7 @@ detail out.**
 
 - **Projects** — register local directories as execution targets.
 - **Templates** — author schema-driven prompt templates with required
-  and optional fields (text, choice, number, date, path, `json`…),
+  and optional fields (textarea, select, multiselect, sequence-gram),
   plus a Jinja-rendered prompt body.
 - **Tasks** — instantiate a template against a project, fill the
   fields, preview the rendered prompt, then queue it up.
@@ -39,7 +39,6 @@ crates/
   lattice-core/        entities, validation, prompt rendering
   lattice-store/       file-backed persistence, LRU cache, fs watcher
   lattice-agents/      manifest registry, runner, queue engine
-  lattice-components/  extensible interactive field components (C4 in v0.2)
   lattice-tui/         ratatui UI (Elm-ish Model/Msg/update/view)
   lattice-bin/         `lattice` binary — wires everything together
 ```
@@ -109,8 +108,6 @@ running agent.
 - **Adding an agent** — drop a TOML manifest under
   `$XDG_CONFIG_HOME/lattice/agents/<id>.toml` (see
   `crates/lattice-agents/src/registry/bundled/` for examples).
-- **Adding a field component** — implement the `Component` trait in
-  `lattice-components` and register it; templates pick it by `kind`.
 - **Custom derived providers** — the `lattice-core` prompt
   templating can pull structured values from `RealFs`, `RealCmd`, or
   `RealEnv`; swap in fakes for offline tests.
@@ -128,8 +125,8 @@ Strict clippy and `unsafe_code = "forbid"` are enforced workspace-wide.
 ## Roadmap
 
 - **v0.1** — this release.
-- **v0.2** — embeddable C4 component modeler; richer diff preview;
-  pause / resume queues across restarts; interactive agent REPL.
+- **v0.2** — richer diff preview; pause / resume queues across restarts;
+  interactive agent REPL.
 - **v0.3+** — shared task library; team settings sync; agent output
   post-processors.
 

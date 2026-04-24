@@ -15,7 +15,7 @@ terminal UI. It is *not* a chat client. Its thesis is simple:
 
 Where "vibe coding" tools optimize for *speed of input*, lattice optimizes
 for *quality of input* without making authoring painful, by pushing rich
-structure (forms, validations, interactive components like C4 diagrams)
+structure (forms and validations)
 through templates that then render into a well-structured Markdown prompt.
 
 ---
@@ -33,7 +33,7 @@ Read in this order for a first pass:
 4. **[DATA_MODEL.md](./DATA_MODEL.md)** — entities, on-disk layout, file
    formats, page-cache design, concurrency/atomicity contracts.
 5. **[UX.md](./UX.md)** — screen inventory, navigation, keybindings, widget
-   catalog, C4 component interaction spec.
+   catalog.
 6. **[AGENTS.md](./AGENTS.md)** — agent manifest spec, cursor-agent reference
    manifest, extension guide, process lifecycle, reattach plan.
 7. **[TEMPLATES.md](./TEMPLATES.md)** — template authoring guide, field type

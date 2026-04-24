@@ -3,7 +3,7 @@
 //! These cover the full path: parse a realistic template TOML, build a
 //! task instance with filled field values, render with a fixed `now`,
 //! and snapshot the output. Any accidental change to the renderer,
-//! filters, skeleton, or field-value formatting surfaces here.
+//! filters, or field-value formatting surfaces here.
 
 use lattice_core::entities::{Project, Task, TaskStatus, Template};
 use lattice_core::prompt::render;
@@ -67,10 +67,7 @@ fn bug_fix_template_renders() {
 }
 
 #[test]
-fn canonical_skeleton_renders_without_custom_prompt() {
-    // Minimal template with no [prompt].template — falls back to the
-    // canonical skeleton. Uses the conventional field names that the
-    // skeleton recognizes (`constraints`, `acceptance`, ...).
+fn prompt_renders_for_minimal_template() {
     let template = load_template(
         r#"
         id = "00000000-0000-0000-0000-000000000000"
@@ -80,39 +77,18 @@ fn canonical_skeleton_renders_without_custom_prompt() {
         created_at = "2026-04-20T09:00:00Z"
         updated_at = "2026-04-20T09:00:00Z"
 
-        [preamble]
-        markdown = "You are a senior Rust engineer."
-
         [[fields]]
         id = "goal"
-        kind = "text"
+        kind = "textarea"
         label = "Goal"
         required = true
 
-        [[fields]]
-        id = "constraints"
-        kind = "multiselect"
-        label = "Constraints"
-        required = false
-        options = ["no-new-deps", "preserve-public-api"]
-
-        [[fields]]
-        id = "acceptance"
-        kind = "multiselect"
-        label = "Acceptance"
-        required = false
-        options = ["tests-green", "clippy-clean"]
+        [prompt]
+        template = "Goal: {{ task.fields.goal }}"
         "#,
     );
-    let task = task_for(
-        &template,
-        serde_json::json!({
-            "goal": "Refactor auth middleware for testability.",
-            "constraints": ["no-new-deps", "preserve-public-api"],
-            "acceptance": ["tests-green", "clippy-clean"],
-        }),
-    );
+    let task = task_for(&template, serde_json::json!({ "goal": "ship it" }));
 
     let out = render(&template, &task, &project(), frozen_now()).expect("render ok");
-    insta::assert_snapshot!("canonical_skeleton_render", out);
+    insta::assert_snapshot!("minimal_prompt_render", out);
 }

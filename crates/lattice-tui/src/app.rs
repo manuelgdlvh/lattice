@@ -524,19 +524,14 @@ impl App {
                     .first()
                     .map(|f| f.value.clone())
                     .unwrap_or_default();
-                let ctx_md = form
+                let fields_src = form
                     .fields
                     .get(1)
                     .map(|f| f.value.clone())
                     .unwrap_or_default();
-                let fields_src = form
-                    .fields
-                    .get(2)
-                    .map(|f| f.value.clone())
-                    .unwrap_or_default();
                 let jinja = form
                     .fields
-                    .get(3)
+                    .get(2)
                     .map(|f| f.value.clone())
                     .unwrap_or_default();
                 if name.trim().is_empty() {
@@ -544,6 +539,14 @@ impl App {
                     model.toasts.push(crate::toast::Toast::new(
                         crate::toast::ToastLevel::Warn,
                         "name is required",
+                    ));
+                    return;
+                }
+                if jinja.trim().is_empty() {
+                    model.form = Some(backup);
+                    model.toasts.push(crate::toast::Toast::new(
+                        crate::toast::ToastLevel::Warn,
+                        "prompt jinja is required",
                     ));
                     return;
                 }
@@ -559,14 +562,8 @@ impl App {
                     }
                 };
                 let mut t = Template::new(name, Timestamp::now());
-                t.preamble.markdown = ctx_md;
                 t.fields = parsed_fields;
-                let trimmed_prompt = jinja.trim();
-                t.prompt.template = if trimmed_prompt.is_empty() {
-                    None
-                } else {
-                    Some(jinja)
-                };
+                t.prompt.template = jinja;
                 if let Err(e) = self.ctx.templates.save(&t).await {
                     model.form = Some(backup);
                     model.toasts.push(crate::toast::Toast::new(
@@ -594,14 +591,9 @@ impl App {
                     .first()
                     .map(|f| f.value.clone())
                     .unwrap_or(t.name);
-                t.preamble.markdown = form
-                    .fields
-                    .get(1)
-                    .map(|f| f.value.clone())
-                    .unwrap_or(t.preamble.markdown);
                 let fields_src = form
                     .fields
-                    .get(2)
+                    .get(1)
                     .map(|f| f.value.clone())
                     .unwrap_or_default();
                 match crate::model::parse_fields_toml(&fields_src) {
@@ -617,14 +609,18 @@ impl App {
                 }
                 let jinja = form
                     .fields
-                    .get(3)
+                    .get(2)
                     .map(|f| f.value.clone())
                     .unwrap_or_default();
-                t.prompt.template = if jinja.trim().is_empty() {
-                    None
-                } else {
-                    Some(jinja)
-                };
+                if jinja.trim().is_empty() {
+                    model.form = Some(backup);
+                    model.toasts.push(crate::toast::Toast::new(
+                        crate::toast::ToastLevel::Warn,
+                        "prompt jinja is required",
+                    ));
+                    return;
+                }
+                t.prompt.template = jinja;
                 t.version += 1;
                 t.updated_at = Timestamp::now();
                 if let Err(e) = self.ctx.templates.save(&t).await {
@@ -661,7 +657,7 @@ impl App {
                     let Some(id) = f.field_id.clone() else {
                         continue;
                     };
-                    let kind = f.kind.unwrap_or(lattice_core::fields::FieldKind::Text);
+                    let kind = f.kind.unwrap_or(lattice_core::fields::FieldKind::Textarea);
                     match parse_field_value(kind, &f.value, f.required) {
                         Ok(Some(v)) => {
                             values.insert(id, v);
@@ -701,33 +697,29 @@ impl App {
                 };
                 task.template_version = tpl.version;
 
-                let prompt = match lattice_core::prompt::render(
-                    &tpl,
-                    &task,
-                    &project,
-                    Timestamp::now(),
-                ) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        model.form = Some(backup);
-                        // Strict undefined mode in MiniJinja (see
-                        // `lattice_core::prompt::render`) means typos
-                        // like `{{ foo }}` instead of
-                        // `{{ task.fields.foo }}` surface here. Point
-                        // the user back at the template they're using
-                        // and remind them how to bail out.
-                        model.toasts.push(crate::toast::Toast::new(
+                let prompt =
+                    match lattice_core::prompt::render(&tpl, &task, &project, Timestamp::now()) {
+                        Ok(p) => p,
+                        Err(e) => {
+                            model.form = Some(backup);
+                            // Strict undefined mode in MiniJinja (see
+                            // `lattice_core::prompt::render`) means typos
+                            // like `{{ foo }}` instead of
+                            // `{{ task.fields.foo }}` surface here. Point
+                            // the user back at the template they're using
+                            // and remind them how to bail out.
+                            model.toasts.push(crate::toast::Toast::new(
                                 crate::toast::ToastLevel::Error,
                                 format!(
                                     "render prompt (template \"{}\"): {e}\n\
-                                     Fix the Prompt Jinja or leave it empty to use the canonical skeleton.\n\
+                                     Fix the Prompt Jinja in the template.\n\
                                      Press Esc to dismiss.",
                                     tpl.name,
                                 ),
                             ));
-                        return;
-                    }
-                };
+                            return;
+                        }
+                    };
 
                 // These two sub-steps used to be silent `warn!`s; a TUI
                 // user would have no way to see that a save partially
@@ -769,13 +761,6 @@ impl App {
                     ));
                     return;
                 };
-                if !task.status.is_pending() {
-                    model.toasts.push(crate::toast::Toast::new(
-                        crate::toast::ToastLevel::Warn,
-                        "only Draft/Queued tasks can be edited",
-                    ));
-                    return;
-                }
 
                 let name = form
                     .fields
@@ -799,7 +784,7 @@ impl App {
                     let Some(id) = f.field_id.clone() else {
                         continue;
                     };
-                    let kind = f.kind.unwrap_or(lattice_core::fields::FieldKind::Text);
+                    let kind = f.kind.unwrap_or(lattice_core::fields::FieldKind::Textarea);
                     match parse_field_value(kind, &f.value, f.required) {
                         Ok(Some(v)) => {
                             values.insert(id, v);
@@ -849,27 +834,23 @@ impl App {
                 // have the latest template available through the store today.
                 task.template_version = tpl.version;
 
-                let prompt = match lattice_core::prompt::render(
-                    &tpl,
-                    &task,
-                    &project,
-                    Timestamp::now(),
-                ) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        model.form = Some(backup);
-                        model.toasts.push(crate::toast::Toast::new(
+                let prompt =
+                    match lattice_core::prompt::render(&tpl, &task, &project, Timestamp::now()) {
+                        Ok(p) => p,
+                        Err(e) => {
+                            model.form = Some(backup);
+                            model.toasts.push(crate::toast::Toast::new(
                                 crate::toast::ToastLevel::Error,
                                 format!(
                                     "render prompt (template \"{}\"): {e}\n\
-                                     Fix the Prompt Jinja or leave it empty to use the canonical skeleton.\n\
+                                     Fix the Prompt Jinja in the template.\n\
                                      Press Esc to dismiss.",
                                     tpl.name,
                                 ),
                             ));
-                        return;
-                    }
-                };
+                            return;
+                        }
+                    };
 
                 if let Err(e) = self.ctx.tasks.save_snapshot(&task, &tpl).await {
                     warn!("save_snapshot: {e}");
@@ -1012,13 +993,9 @@ fn parse_field_value(
         return Ok(None);
     }
     let v = match kind {
-        FieldKind::Text
-        | FieldKind::Textarea
-        | FieldKind::FilePicker
-        | FieldKind::Glob
-        | FieldKind::CmdOutput
-        | FieldKind::SequenceGram
-        | FieldKind::Select => serde_json::Value::String(raw.to_string()),
+        FieldKind::Textarea | FieldKind::SequenceGram | FieldKind::Select => {
+            serde_json::Value::String(raw.to_string())
+        }
         FieldKind::Multiselect => serde_json::Value::Array(
             trimmed
                 .split(',')
@@ -1026,21 +1003,6 @@ fn parse_field_value(
                 .filter(|v| !v.as_str().unwrap_or("").is_empty())
                 .collect(),
         ),
-        FieldKind::Number => {
-            let n: f64 = trimmed
-                .parse()
-                .map_err(|_| format!("expected number, got `{trimmed}`"))?;
-            serde_json::json!(n)
-        }
-        FieldKind::Boolean => match trimmed.to_ascii_lowercase().as_str() {
-            "true" | "yes" | "y" | "1" => serde_json::Value::Bool(true),
-            "false" | "no" | "n" | "0" => serde_json::Value::Bool(false),
-            _ => return Err("expected true/false".into()),
-        },
-        FieldKind::MarkdownNote => return Ok(None),
-        FieldKind::Ref | FieldKind::Component => {
-            serde_json::from_str(trimmed).map_err(|e| format!("expected JSON object: {e}"))?
-        }
     };
     Ok(Some(v))
 }

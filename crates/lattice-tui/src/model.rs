@@ -508,7 +508,6 @@ pub enum Msg {
     // tasks -----------------------------------------------------------
     TaskCursor(isize),
     ToggleTaskSelection(TaskId),
-    ClearTaskSelection,
     OpenCreateTask,
     /// Open the task-creation form for a specific template, bypassing
     /// the picker. Used both as the picker's accept message and from
@@ -685,6 +684,10 @@ pub fn update(model: &mut Model, msg: Msg) -> Option<Cmd> {
         }
         Msg::SetTasks(pid, v) => {
             model.tasks_by_project.insert(pid, v);
+            // Clamp cursor after refresh so keybinds don't silently no-op
+            // when the list shrinks (e.g. after delete or external change).
+            let len = model.tasks_for_selected_project().len();
+            model.task_cursor = model.task_cursor.min(len.saturating_sub(1));
             None
         }
         Msg::SetRuns(pid, v) => {
@@ -859,19 +862,13 @@ pub fn update(model: &mut Model, msg: Msg) -> Option<Cmd> {
                 title: "New template".into(),
                 fields: vec![
                     FormField::plain("Name", "", true, false),
-                    FormField::plain("Context (markdown)", "", false, true),
                     FormField::plain(
                         "Fields (TOML — one [[fields]] block per field)",
                         default_fields_toml_hint(),
                         false,
                         true,
                     ),
-                    FormField::plain(
-                        "Prompt Jinja (optional — leave empty for canonical skeleton)",
-                        String::new(),
-                        false,
-                        true,
-                    ),
+                    FormField::plain("Prompt Jinja", String::new(), true, true),
                 ],
                 cursor: 0,
                 submit: FormSubmit::CreateTemplate,
@@ -886,23 +883,12 @@ pub fn update(model: &mut Model, msg: Msg) -> Option<Cmd> {
                 fields: vec![
                     FormField::plain("Name", tpl.name, true, false),
                     FormField::plain(
-                        "Context (markdown)",
-                        tpl.preamble.markdown.clone(),
-                        false,
-                        true,
-                    ),
-                    FormField::plain(
                         "Fields (TOML — one [[fields]] block per field)",
                         fields_toml,
                         false,
                         true,
                     ),
-                    FormField::plain(
-                        "Prompt Jinja (optional — leave empty for canonical skeleton)",
-                        tpl.prompt.template.clone().unwrap_or_default(),
-                        false,
-                        true,
-                    ),
+                    FormField::plain("Prompt Jinja", tpl.prompt.template.clone(), true, true),
                 ],
                 cursor: 0,
                 submit: FormSubmit::EditTemplate(id),
@@ -934,10 +920,6 @@ pub fn update(model: &mut Model, msg: Msg) -> Option<Cmd> {
             } else {
                 model.task_multi_select.push(id);
             }
-            None
-        }
-        Msg::ClearTaskSelection => {
-            model.task_multi_select.clear();
             None
         }
         Msg::OpenCreateTask => {
@@ -1008,13 +990,6 @@ pub fn update(model: &mut Model, msg: Msg) -> Option<Cmd> {
                 return None;
             };
             let task = tasks.iter().find(|t| t.id == task_id).cloned()?;
-            if !task.status.is_pending() {
-                model.toasts.push(Toast::new(
-                    ToastLevel::Warn,
-                    "only Draft/Queued tasks can be edited",
-                ));
-                return None;
-            }
 
             // We build the form from the current in-memory template schema.
             // If the template has changed since task creation, the edit UI
@@ -1044,7 +1019,7 @@ pub fn update(model: &mut Model, msg: Msg) -> Option<Cmd> {
                     let mut f =
                         FormField::plain(format!("{k} [unknown]"), v.to_string(), false, true);
                     f.field_id = Some(k.clone());
-                    f.kind = Some(FieldKind::Text);
+                    f.kind = Some(FieldKind::Textarea);
                     fields.push(f);
                 }
             }
@@ -1800,8 +1775,8 @@ const _TS: [TaskStatus; 0] = [];
 /// editor when the user creates a new template. We deliberately show
 /// the common kinds so the UX doubles as documentation.
 fn default_fields_toml_hint() -> String {
-    "# one [[fields]] block per field. kinds: text, textarea, select,\n\
-     # multiselect, number, boolean, file_picker, glob, markdown_note.\n\
+    "# one [[fields]] block per field. kinds: textarea, select,\n\
+     # multiselect, sequence-gram.\n\
      # Example:\n\
      # [[fields]]\n\
      # id = \"description\"\n\
@@ -1909,18 +1884,9 @@ fn form_field_for_template_field(field: &lattice_core::fields::Field) -> FormFie
 
 fn format_field_label(field: &lattice_core::fields::Field) -> String {
     let kind_label = match field.kind {
-        FieldKind::Text => "text",
         FieldKind::Textarea => "textarea",
         FieldKind::Select => "select",
         FieldKind::Multiselect => "multiselect",
-        FieldKind::Number => "number",
-        FieldKind::Boolean => "boolean",
-        FieldKind::FilePicker => "file",
-        FieldKind::Glob => "glob",
-        FieldKind::CmdOutput => "cmd_output",
-        FieldKind::MarkdownNote => "note",
-        FieldKind::Ref => "ref",
-        FieldKind::Component => "component",
         FieldKind::SequenceGram => "sequence-gram",
     };
     format!("{} [{}]", field.label, kind_label)
@@ -1978,7 +1944,7 @@ required = true
         let mut tpl = Template::new("refactor", now);
         tpl.fields.push(Field {
             id: "module".into(),
-            kind: FieldKind::Text,
+            kind: FieldKind::Textarea,
             label: "Target module".into(),
             help: None,
             placeholder: None,
@@ -2010,8 +1976,8 @@ required = true
         assert_eq!(form.fields.len(), 3);
         assert_eq!(form.fields[0].label, "Name");
         assert_eq!(form.fields[1].field_id.as_deref(), Some("module"));
-        assert_eq!(form.fields[1].kind, Some(FieldKind::Text));
-        assert!(!form.fields[1].multiline);
+        assert_eq!(form.fields[1].kind, Some(FieldKind::Textarea));
+        assert!(form.fields[1].multiline);
         assert!(form.fields[1].required);
         assert_eq!(form.fields[2].field_id.as_deref(), Some("description"));
         assert_eq!(form.fields[2].kind, Some(FieldKind::Textarea));
@@ -2106,14 +2072,14 @@ required = true
         let mut m = Model::new();
         update(&mut m, Msg::OpenCreateTemplate);
         let form = m.form.expect("form should open");
-        // Name, Context, Fields, Prompt.
-        assert_eq!(form.fields.len(), 4);
+        // Name, Fields, Prompt.
+        assert_eq!(form.fields.len(), 3);
         assert!(
-            form.fields[2].label.starts_with("Fields"),
-            "third field should be the Fields TOML editor, got: {}",
-            form.fields[2].label
+            form.fields[1].label.starts_with("Fields"),
+            "second field should be the Fields TOML editor, got: {}",
+            form.fields[1].label
         );
-        assert!(form.fields[2].multiline);
+        assert!(form.fields[1].multiline);
     }
 
     #[test]

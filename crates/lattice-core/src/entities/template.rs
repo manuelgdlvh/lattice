@@ -1,5 +1,5 @@
-//! `Template` entity — the schema + preamble + prompt body + derived
-//! spec that tasks are instantiated from.
+//! `Template` entity — the schema + prompt body + derived spec that
+//! tasks are instantiated from.
 
 use std::collections::BTreeMap;
 
@@ -14,14 +14,6 @@ use super::CURRENT_SCHEMA_VERSION;
 
 fn current_schema_version() -> u32 {
     CURRENT_SCHEMA_VERSION
-}
-
-/// Static markdown prefix for the prompt. Tiny wrapper so the TOML shape
-/// matches the spec (`[preamble] markdown = "..."`).
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct Preamble {
-    pub markdown: String,
 }
 
 /// A derived-value declaration. The concrete resolver lives in the
@@ -44,12 +36,10 @@ pub struct FieldGroup {
 }
 
 /// Prompt-rendering block.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PromptSpec {
-    /// `MiniJinja` template body. When `None`, the canonical skeleton is
-    /// used at render time.
-    pub template: Option<String>,
+    /// `MiniJinja` template body.
+    pub template: String,
 }
 
 /// A full template as authored on disk.
@@ -68,15 +58,12 @@ pub struct Template {
     pub tags: Vec<String>,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
-    #[serde(default)]
-    pub preamble: Preamble,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub derived: BTreeMap<String, DerivedSpec>,
     #[serde(default, rename = "fields")]
     pub fields: Vec<Field>,
     #[serde(default, rename = "groups", skip_serializing_if = "Vec::is_empty")]
     pub groups: Vec<FieldGroup>,
-    #[serde(default)]
     pub prompt: PromptSpec,
 }
 
@@ -95,11 +82,12 @@ impl Template {
             tags: Vec::new(),
             created_at: now,
             updated_at: now,
-            preamble: Preamble::default(),
             derived: BTreeMap::new(),
             fields: Vec::new(),
             groups: Vec::new(),
-            prompt: PromptSpec::default(),
+            prompt: PromptSpec {
+                template: String::new(),
+            },
         }
     }
 }
@@ -112,10 +100,10 @@ mod tests {
     fn sample_template() -> Template {
         let now = Timestamp::parse("2026-04-24T10:00:00Z").unwrap();
         let mut t = Template::new("refactor-module", now);
-        t.preamble.markdown = "Rust codebase.".into();
+        t.prompt.template = "hello".into();
         t.fields.push(Field {
             id: "module_path".into(),
-            kind: FieldKind::FilePicker,
+            kind: FieldKind::Textarea,
             label: "Target module".into(),
             help: None,
             placeholder: None,

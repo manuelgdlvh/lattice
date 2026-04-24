@@ -62,16 +62,8 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, model: &Model) {
     if let Some(t) = model.templates.get(model.template_cursor) {
         let v = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Percentage(30),
-                Constraint::Percentage(40),
-                Constraint::Percentage(30),
-            ])
+            .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
             .split(chunks[1]);
-        let ctx = Paragraph::new(t.preamble.markdown.clone())
-            .wrap(Wrap { trim: false })
-            .block(Block::default().borders(Borders::ALL).title(" Context "));
-        frame.render_widget(ctx, v[0]);
 
         let field_lines: Vec<Line<'_>> = if t.fields.is_empty() {
             vec![Line::from(Span::styled(
@@ -105,12 +97,9 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, model: &Model) {
                     .borders(Borders::ALL)
                     .title(format!(" Fields ({}) ", t.fields.len())),
             );
-        frame.render_widget(fields, v[1]);
+        frame.render_widget(fields, v[0]);
 
-        let prompt_body = t.prompt.template.clone().unwrap_or_else(|| {
-            "(uses canonical skeleton: Context / Inputs / Constraints / Acceptance / Deliverables / References)".to_string()
-        });
-        let prompt = Paragraph::new(prompt_body)
+        let prompt = Paragraph::new(t.prompt.template.clone())
             .wrap(Wrap { trim: false })
             .block(
                 Block::default().borders(Borders::ALL).title(Span::styled(
@@ -120,7 +109,7 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, model: &Model) {
                         .add_modifier(Modifier::BOLD),
                 )),
             );
-        frame.render_widget(prompt, v[2]);
+        frame.render_widget(prompt, v[1]);
     } else {
         let lines = vec![Line::from(Span::styled(
             "No template selected. Press `n` to create one.",

@@ -1,6 +1,6 @@
 //! Custom `MiniJinja` filters used in prompt templates.
 //!
-//! See `docs/TEMPLATES.md §6.3` for the canonical list and semantics.
+//! See `docs/TEMPLATES.md §6.3` for the full list and semantics.
 
 // MiniJinja's filter trait works cleanly with owned `Value` / `Kwargs`
 // arguments; rewriting every filter to take references just to satisfy

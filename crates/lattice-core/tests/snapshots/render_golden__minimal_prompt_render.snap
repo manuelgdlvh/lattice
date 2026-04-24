@@ -1,0 +1,6 @@
+---
+source: crates/lattice-core/tests/render_golden.rs
+assertion_line: 93
+expression: out
+---
+Goal: ship it

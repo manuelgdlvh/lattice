@@ -66,10 +66,6 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, model: &Model) {
         )),
         Line::from(""),
         Line::from(vec![
-            Span::styled("text", Style::default().fg(Color::Yellow)),
-            Span::raw(" — single-line string"),
-        ]),
-        Line::from(vec![
             Span::styled("textarea", Style::default().fg(Color::Yellow)),
             Span::raw(" — multi-line string"),
         ]),
@@ -82,36 +78,8 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, model: &Model) {
             Span::raw(" — comma-separated option ids (stored as JSON array)"),
         ]),
         Line::from(vec![
-            Span::styled("number", Style::default().fg(Color::Yellow)),
-            Span::raw(" — numeric input (supports integer-only via `integer = true`)"),
-        ]),
-        Line::from(vec![
-            Span::styled("boolean", Style::default().fg(Color::Yellow)),
-            Span::raw(" — true/false (also accepts yes/no, y/n, 1/0)"),
-        ]),
-        Line::from(vec![
-            Span::styled("file_picker", Style::default().fg(Color::Yellow)),
-            Span::raw(" — project-relative path string"),
-        ]),
-        Line::from(vec![
-            Span::styled("glob", Style::default().fg(Color::Yellow)),
-            Span::raw(" — glob pattern string"),
-        ]),
-        Line::from(vec![
-            Span::styled("cmd_output", Style::default().fg(Color::Yellow)),
-            Span::raw(" — captured at task creation time (read-only)"),
-        ]),
-        Line::from(vec![
-            Span::styled("markdown_note", Style::default().fg(Color::Yellow)),
-            Span::raw(" — documentation only (no stored value)"),
-        ]),
-        Line::from(vec![
-            Span::styled("ref", Style::default().fg(Color::Yellow)),
-            Span::raw(" — JSON ref object (v0.1: `{ kind: \"run\", id }`)"),
-        ]),
-        Line::from(vec![
-            Span::styled("component", Style::default().fg(Color::Yellow)),
-            Span::raw(" — JSON value consumed by a UI component (v0.2 stub)"),
+            Span::styled("sequence-gram", Style::default().fg(Color::Yellow)),
+            Span::raw(" — sequence diagram text (use F3 in forms to edit)"),
         ]),
     ];
     let p = Paragraph::new(field_lines)

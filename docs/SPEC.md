@@ -41,8 +41,8 @@ Not in scope: teams, shared libraries of templates, auth.
 
 - **Project** — a reference to a local directory (usually a Git repo) where
   agents will be executed. The directory is the execution cwd.
-- **Template** — a reusable schema: preamble, fields, validation rules,
-  prompt rendering logic, a canonical skeleton.
+- **Template** — a reusable schema: fields, validation rules, and prompt
+  rendering logic.
 - **Field** — a typed input within a template. Built-in primitive types in
   v0.1; interactive components arrive in v0.2.
 - **Task** — an instance of a template, bound to a project, with all
@@ -73,8 +73,8 @@ All must be satisfied for v0.1 exit.
 - US-P3 Rename and re-describe a project.
 
 ### 4.2 Template authoring
-- US-T1 Create a template via the TUI editor: name, description, preamble,
-  prompt skeleton, a list of typed fields with validation.
+- US-T1 Create a template via the TUI editor: name, description, a prompt
+  body, a list of typed fields with validation.
 - US-T2 Edit an existing template. Each save bumps a monotonic version
   counter; old versions are kept on disk.
 - US-T3 Delete a template (existing tasks that reference it are unaffected
@@ -138,7 +138,7 @@ All must be satisfied for v0.1 exit.
 ### 5.2 Rendering
 - Prompts are rendered with **MiniJinja** using the task's field values and
   a fixed set of built-in globals (see `TEMPLATES.md`).
-- The default skeleton produces a structured Markdown document.
+- Templates should produce a structured Markdown document.
 - Preview uses the exact same renderer; preview and dispatch are
   byte-identical given the same inputs.
 
@@ -213,7 +213,7 @@ All must be satisfied for v0.1 exit.
 
 | Risk | Mitigation |
 |---|---|
-| MiniJinja templates are too flexible and authors create unreadable prompts | Ship a default skeleton; encourage overrides only when necessary; `TEMPLATES.md` emphasizes canonical structure. |
+| MiniJinja templates are too flexible and authors create unreadable prompts | Ship strong authoring guidance and examples; `TEMPLATES.md` emphasizes reviewable structure. |
 | Agents vary widely in invocation conventions | Manifest abstraction from day one, with `cursor-agent` proving the contract. |
 | File watcher fires on our own writes and causes reload storms | Tag own-process writes with a monotonic counter; watcher ignores known counters. |
 | Users lose work when app crashes during task authoring | Autosave drafts every N keystrokes or on any field blur. |

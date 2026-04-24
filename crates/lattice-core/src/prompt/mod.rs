@@ -12,10 +12,8 @@
 //! `now`).
 
 mod filters;
-mod skeleton;
 
 pub use filters::register_filters;
-pub use skeleton::canonical_template;
 
 use minijinja::{Environment, UndefinedBehavior, Value as JValue};
 use serde::Serialize;
@@ -29,7 +27,6 @@ use crate::time::Timestamp;
 /// Mirrors the table in `docs/TEMPLATES.md §6.2`.
 #[derive(Debug, Serialize)]
 pub struct RenderScope<'a> {
-    pub preamble: &'a str,
     pub project: ProjectScope<'a>,
     pub task: TaskScope<'a>,
     pub template: TemplateScope<'a>,
@@ -60,19 +57,14 @@ pub struct TemplateScope<'a> {
     pub version: u32,
 }
 
-/// The main entry point. Uses the template's custom prompt body if set,
-/// falling back to the canonical skeleton otherwise.
+/// The main entry point.
 pub fn render(
     template: &Template,
     task: &Task,
     project: &Project,
     now: Timestamp,
 ) -> Result<String, RenderError> {
-    let body = template
-        .prompt
-        .template
-        .as_deref()
-        .unwrap_or_else(|| canonical_template());
+    let body = template.prompt.template.as_str();
 
     let mut env = Environment::new();
     env.set_undefined_behavior(UndefinedBehavior::Strict);
@@ -84,7 +76,6 @@ pub fn render(
     let derived = to_json_map(&task.derived);
 
     let scope = RenderScope {
-        preamble: &template.preamble.markdown,
         project: ProjectScope {
             id: project.id.to_string(),
             name: &project.name,
@@ -121,21 +112,17 @@ fn to_json_map<S: Serialize>(v: &S) -> serde_json::Map<String, serde_json::Value
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::entities::{Preamble, PromptSpec, TaskStatus};
+    use crate::entities::{PromptSpec, TaskStatus};
     use serde_json::json;
 
     fn fixtures() -> (Project, Template, Task) {
         let now = Timestamp::parse("2026-04-24T10:00:00Z").unwrap();
         let project = Project::new("acme", "/tmp/acme", now);
         let mut template = Template::new("bug-fix", now);
-        template.preamble = Preamble {
-            markdown: "Be careful.".into(),
-        };
         template.prompt = PromptSpec {
-            template: Some(
+            template:
                 "hello {{ project.name }} / {{ task.fields.ticket }} ({{ template.version }})"
                     .into(),
-            ),
         };
         let mut task = Task::new(project.id, template.id, template.version, "t", now);
         task.status = TaskStatus::Draft;
@@ -155,20 +142,10 @@ mod tests {
     fn strict_mode_errors_on_undefined() {
         let (project, mut template, task) = fixtures();
         template.prompt = PromptSpec {
-            template: Some("{{ task.fields.not_there }}".into()),
+            template: "{{ task.fields.not_there }}".into(),
         };
         let now = Timestamp::parse("2026-04-24T12:00:00Z").unwrap();
         let err = render(&template, &task, &project, now).unwrap_err();
         assert!(matches!(err, RenderError::Engine(_)));
-    }
-
-    #[test]
-    fn falls_back_to_canonical_skeleton() {
-        let (project, mut template, task) = fixtures();
-        template.prompt = PromptSpec::default();
-        let now = Timestamp::parse("2026-04-24T12:00:00Z").unwrap();
-        let out = render(&template, &task, &project, now).unwrap();
-        assert!(out.contains("## Context"));
-        assert!(out.contains("acme"));
     }
 }

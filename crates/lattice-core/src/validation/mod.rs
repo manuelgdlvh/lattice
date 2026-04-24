@@ -99,7 +99,7 @@ mod tests {
             },
             Field {
                 id: "perf_budget_ms".into(),
-                kind: FieldKind::Number,
+                kind: FieldKind::Textarea,
                 label: "Perf budget".into(),
                 help: None,
                 placeholder: None,
@@ -107,14 +107,9 @@ mod tests {
                 default: None,
                 show_if: Some("'performance' in task.fields.goals".into()),
                 validation: Validation {
-                    min: Some(1.0),
-                    max: Some(10_000.0),
                     ..Validation::default()
                 },
-                options: FieldOptions {
-                    integer: true,
-                    ..FieldOptions::default()
-                },
+                options: FieldOptions::default(),
             },
         ];
         t

@@ -72,36 +72,11 @@ pub fn validate_field(field: &Field, value: Option<&Value>) -> Vec<FieldError> {
     };
 
     match field.kind {
-        FieldKind::Text
-        | FieldKind::Textarea
-        | FieldKind::FilePicker
-        | FieldKind::Glob
-        | FieldKind::CmdOutput
-        | FieldKind::SequenceGram => {
+        FieldKind::Textarea | FieldKind::SequenceGram => {
             validate_string(&field.id, &field.validation, v, &mut out);
         }
-        FieldKind::Number => validate_number(
-            &field.id,
-            &field.validation,
-            field.options.integer,
-            v,
-            &mut out,
-        ),
-        FieldKind::Boolean => validate_bool(&field.id, v, &mut out),
         FieldKind::Select => validate_select(field, v, &mut out),
         FieldKind::Multiselect => validate_multiselect(field, v, &mut out),
-        FieldKind::Ref | FieldKind::Component => {
-            if !v.is_object() {
-                out.push(FieldError::new(
-                    &field.id,
-                    FieldErrorKind::WrongType {
-                        expected: "object",
-                        actual: ValueType::of(v).as_static(),
-                    },
-                ));
-            }
-        }
-        FieldKind::MarkdownNote => {}
     }
 
     if let Some(allowed) = field.validation.allowed_values.as_ref()
@@ -179,58 +154,6 @@ fn validate_string(
     }
 }
 
-fn validate_number(
-    field_id: &str,
-    rules: &super::Validation,
-    integer_only: bool,
-    v: &Value,
-    out: &mut Vec<FieldError>,
-) {
-    let Some(n) = v.as_f64() else {
-        out.push(FieldError::new(
-            field_id,
-            FieldErrorKind::WrongType {
-                expected: "number",
-                actual: ValueType::of(v).as_static(),
-            },
-        ));
-        return;
-    };
-
-    if integer_only && n.fract() != 0.0 {
-        out.push(FieldError::new(field_id, FieldErrorKind::NotInteger));
-    }
-
-    if let Some(min) = rules.min
-        && n < min
-    {
-        out.push(FieldError::new(
-            field_id,
-            FieldErrorKind::BelowMin { value: n, min },
-        ));
-    }
-    if let Some(max) = rules.max
-        && n > max
-    {
-        out.push(FieldError::new(
-            field_id,
-            FieldErrorKind::AboveMax { value: n, max },
-        ));
-    }
-}
-
-fn validate_bool(field_id: &str, v: &Value, out: &mut Vec<FieldError>) {
-    if !v.is_boolean() {
-        out.push(FieldError::new(
-            field_id,
-            FieldErrorKind::WrongType {
-                expected: "boolean",
-                actual: ValueType::of(v).as_static(),
-            },
-        ));
-    }
-}
-
 fn validate_select(field: &Field, v: &Value, out: &mut Vec<FieldError>) {
     let Some(s) = v.as_str() else {
         out.push(FieldError::new(
@@ -298,10 +221,10 @@ mod tests {
     use crate::fields::{FieldOptions, OptionItem, Validation};
     use serde_json::json;
 
-    fn text_field(required: bool) -> Field {
+    fn textarea_field(required: bool) -> Field {
         Field {
             id: "name".into(),
-            kind: FieldKind::Text,
+            kind: FieldKind::Textarea,
             label: "Name".into(),
             help: None,
             placeholder: None,
@@ -319,7 +242,7 @@ mod tests {
 
     #[test]
     fn required_missing_is_error() {
-        let f = text_field(true);
+        let f = textarea_field(true);
         let errs = validate_field(&f, None);
         assert_eq!(errs.len(), 1);
         assert_eq!(errs[0].kind, FieldErrorKind::Required);
@@ -327,49 +250,21 @@ mod tests {
 
     #[test]
     fn optional_missing_is_ok() {
-        let f = text_field(false);
+        let f = textarea_field(false);
         assert!(validate_field(&f, None).is_empty());
     }
 
     #[test]
     fn string_length_bounds() {
-        let f = text_field(true);
+        let f = textarea_field(true);
         assert!(!validate_field(&f, Some(&json!("a"))).is_empty());
         assert!(validate_field(&f, Some(&json!("abcd"))).is_empty());
         assert!(!validate_field(&f, Some(&json!("abcdef"))).is_empty());
     }
 
     #[test]
-    fn number_integer_and_bounds() {
-        let f = Field {
-            id: "n".into(),
-            kind: FieldKind::Number,
-            label: "N".into(),
-            help: None,
-            placeholder: None,
-            required: true,
-            default: None,
-            show_if: None,
-            validation: Validation {
-                min: Some(1.0),
-                max: Some(10.0),
-                ..Validation::default()
-            },
-            options: FieldOptions {
-                integer: true,
-                ..FieldOptions::default()
-            },
-        };
-        assert!(validate_field(&f, Some(&json!(5))).is_empty());
-        assert!(!validate_field(&f, Some(&json!(0))).is_empty());
-        assert!(!validate_field(&f, Some(&json!(11))).is_empty());
-        assert!(!validate_field(&f, Some(&json!(3.5))).is_empty());
-        assert!(!validate_field(&f, Some(&json!("five"))).is_empty());
-    }
-
-    #[test]
     fn select_rejects_unknown_option() {
-        let mut f = text_field(true);
+        let mut f = textarea_field(true);
         f.kind = FieldKind::Select;
         f.validation = Validation::default();
         f.options.options = vec![OptionItem::Bare("a".into()), OptionItem::Bare("b".into())];
@@ -402,7 +297,7 @@ mod tests {
 
     #[test]
     fn regex_pattern_applies() {
-        let mut f = text_field(true);
+        let mut f = textarea_field(true);
         f.validation = Validation {
             min_length: None,
             max_length: None,
@@ -416,22 +311,5 @@ mod tests {
             errs[0].kind,
             FieldErrorKind::PatternMismatch { .. }
         ));
-    }
-
-    #[test]
-    fn markdown_note_never_errors() {
-        let f = Field {
-            id: "note".into(),
-            kind: FieldKind::MarkdownNote,
-            label: "Note".into(),
-            help: None,
-            placeholder: None,
-            required: true,
-            default: None,
-            show_if: None,
-            validation: Validation::default(),
-            options: FieldOptions::default(),
-        };
-        assert!(validate_field(&f, None).is_empty());
     }
 }

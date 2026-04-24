@@ -9,7 +9,7 @@ v0.2–v1.0.
 
 | Concern | Choice | Rationale |
 |---|---|---|
-| TUI | `ratatui` + `crossterm` | De-facto standard; custom-widget friendly for C4 later. |
+| TUI | `ratatui` + `crossterm` | De-facto standard; custom-widget friendly. |
 | Async runtime | `tokio` (multi-thread) | Process supervision, file I/O, watchers. |
 | Templating | `minijinja` | Jinja2-compatible, actively maintained, Rust-native. |
 | Serialization | `serde` + `toml` (author-facing) + `serde_json` (machine-facing) | Human-readable for templates, JSON where we need round-tripping with agents. |
@@ -39,7 +39,7 @@ structui/                       # workspace root
 │   ├── lattice-core/         # domain model + pure logic (no I/O)
 │   │   └── src/
 │   │       ├── entities/       # Project, Template, Task, Run, Field, ...
-│   │       ├── prompt/         # MiniJinja glue, skeleton, renderer
+│   │       ├── prompt/         # MiniJinja glue + renderer
 │   │       ├── validation/     # field validation rules
 │   │       ├── derive/         # allow-listed derived-value providers
 │   │       └── error.rs
@@ -56,11 +56,7 @@ structui/                       # workspace root
 │   │       ├── detect.rs       # PATH probing
 │   │       ├── runner.rs       # spawn + tee + lifecycle
 │   │       └── builtin/        # shipped manifests (cursor-agent.toml)
-│   ├── lattice-components/   # InteractiveComponent trait + builtins (v0.2+)
-│   │   └── src/
-│   │       ├── trait_.rs
-│   │       ├── registry.rs
-│   │       └── builtin/        # c4_container.rs, c4_component.rs, ...
+│   # lattice-components/     # removed (interactive components out of scope)
 │   ├── lattice-tui/          # ratatui views, widgets, keymap
 │   │   └── src/
 │   │       ├── app.rs          # Model/Msg/update
@@ -289,9 +285,6 @@ Template.body (string with MiniJinja tags)
                  MiniJinja render → Markdown string
                               │
                               ▼
-                 Skeleton post-process (section ordering)
-                              │
-                              ▼
                  Frozen prompt written to run.prompt.md
 ```
 
@@ -305,8 +298,6 @@ Template.body (string with MiniJinja tags)
 | `template.version`, `template.name` | Frozen template snapshot. |
 | `now` | UTC RFC-3339 timestamp (frozen at render). |
 | `derived.<key>` | Resolved derived-value providers. |
-| `component.<field>.markdown` | Rendered markdown block of an interactive component (v0.2+). |
-| `component.<field>.json` | Raw JSON of an interactive component (v0.2+). |
 
 **Custom filters**:
 - `indent(n)`, `bullet`, `code_block(lang="rust")`, `quote`, `truncate(n)`.

@@ -4,19 +4,12 @@
 //! value is stored on the task as a `serde_json::Value` keyed by the
 //! field's id.
 //!
-//! v0.1 supports the following kinds (from `docs/TEMPLATES.md`):
+//! Supported kinds:
 //!
-//! - `text`, `textarea` — strings
+//! - `textarea` — string
 //! - `select` — single choice from `options`
 //! - `multiselect` — subset of `options`
-//! - `number` — numeric (integer-only if `integer: true`)
-//! - `boolean` — bool
-//! - `file_picker` — project-relative path string
-//! - `glob` — glob pattern string
-//! - `cmd_output` — captured at task-creation time (read-only value)
-//! - `markdown_note` — documentation, no value
-//! - `ref` — reference to another entity (v0.1 only `{ kind = "run", id }`)
-//! - `component` — interactive component (v0.2 stub — accepts any JSON value)
+//! - `sequence-gram` — string (edited with the sequence diagram UI)
 
 mod validation;
 
@@ -31,14 +24,6 @@ use serde_json::Value;
 #[serde(default)]
 pub struct FieldOptions {
     pub options: Vec<OptionItem>,
-    pub integer: bool,
-    pub extensions: Vec<String>,
-    pub root: Option<String>,
-    pub base: Option<String>,
-    pub cmd: Option<Vec<String>>,
-    pub target: Option<String>,
-    pub filter: Option<Value>,
-    pub component_kind: Option<String>,
 }
 
 /// A select/multiselect option. Authors can write either a bare string
@@ -81,31 +66,21 @@ pub struct Validation {
 
 /// Every field kind recognized by v0.1. We keep this as a data-centric
 /// enum with string tags so TOML serialization remains ergonomic:
-/// `kind = "text"` rather than a wrapped structure per variant.
+/// `kind = "textarea"` rather than a wrapped structure per variant.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FieldKind {
-    Text,
     Textarea,
     Select,
     Multiselect,
-    Number,
-    Boolean,
-    FilePicker,
-    Glob,
-    CmdOutput,
-    MarkdownNote,
-    Ref,
-    Component,
     #[serde(rename = "sequence-gram")]
     SequenceGram,
 }
 
 impl FieldKind {
     /// Does a value of this kind carry a user-facing value at all?
-    /// `markdown_note` is documentation-only.
     pub fn has_value(self) -> bool {
-        !matches!(self, Self::MarkdownNote)
+        true
     }
 }
 
@@ -181,7 +156,7 @@ mod tests {
     fn field_deserializes_from_toml() {
         let src = r#"
             id = "module_path"
-            kind = "file_picker"
+            kind = "textarea"
             label = "Target module"
             required = true
             [validation]
@@ -189,7 +164,7 @@ mod tests {
         "#;
         let f: Field = toml::from_str(src).unwrap();
         assert_eq!(f.id, "module_path");
-        assert_eq!(f.kind, FieldKind::FilePicker);
+        assert_eq!(f.kind, FieldKind::Textarea);
         assert!(f.required);
         assert_eq!(f.validation.regex.as_deref(), Some("^src/.*\\.rs$"));
     }
@@ -207,12 +182,6 @@ mod tests {
         let re = toml::to_string(&f).unwrap();
         let back: Field = toml::from_str(&re).unwrap();
         assert_eq!(f, back);
-    }
-
-    #[test]
-    fn markdown_note_has_no_value() {
-        assert!(!FieldKind::MarkdownNote.has_value());
-        assert!(FieldKind::Text.has_value());
     }
 
     #[test]

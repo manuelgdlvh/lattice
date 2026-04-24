@@ -1,0 +1,67 @@
+//! Built-in templates seeded on first run.
+//!
+//! Seeding is intentionally conservative: we only write defaults when the
+//! user's templates directory is empty.
+
+use lattice_core::fields::{Field, FieldKind, FieldOptions, Validation};
+use lattice_core::time::Timestamp;
+
+use lattice_core::entities::{PromptSpec, Template};
+
+pub(crate) fn default_templates(now: Timestamp) -> Vec<Template> {
+    let mut t = Template::new("Code Builder", now);
+    t.description = "Default template seeded on first run.".into();
+    t.fields = vec![
+        Field {
+            id: "description".into(),
+            kind: FieldKind::Textarea,
+            label: "What to do".into(),
+            help: None,
+            placeholder: Some(
+                "Describe the change you want, constraints, and acceptance criteria.".into(),
+            ),
+            required: true,
+            default: None,
+            show_if: None,
+            validation: Validation::default(),
+            options: FieldOptions { options: vec![] },
+        },
+        Field {
+            id: "diagrams".into(),
+            kind: FieldKind::SequenceGram,
+            label: "Sequence diagrams".into(),
+            help: Some("Add one or more diagrams (F3 opens the editor).".into()),
+            placeholder: None,
+            required: true,
+            default: None,
+            show_if: None,
+            validation: Validation::default(),
+            options: FieldOptions { options: vec![] },
+        },
+    ];
+    t.prompt = PromptSpec {
+        template: r#"## Role
+You are an autonomous senior engineer working in `{{ project.path }}`.
+
+## Goal
+{{ task.fields.description | quote }}
+
+## Sequence diagrams (source of truth)
+{{ task.fields.diagrams | sequence_gram }}
+
+## Working mode (autonomous)
+- Do not ask the user for feedback or ask intermediate questions; execute end-to-end.
+- Only ask a question if it is **strictly necessary** (blocking) and cannot be safely inferred.
+- Delegate internally: break the goal into steps and carry them out without confirmation.
+- Keep changes minimal but complete; prioritize reviewable diffs.
+- Follow repository conventions and avoid introducing technical debt.
+- If you make assumptions, list them explicitly in the final delivery.
+
+## Delivery
+- Summary of changes and rationale.
+- Concrete test plan (commands to run).
+- Risks / follow-ups if applicable."#
+            .to_string(),
+    };
+    vec![t]
+}

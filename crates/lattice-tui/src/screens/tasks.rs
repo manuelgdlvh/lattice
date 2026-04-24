@@ -16,16 +16,27 @@ pub fn handle_key(model: &Model, key: KeyEvent) -> Option<Msg> {
         KeyCode::Up => Some(Msg::TaskCursor(-1)),
         KeyCode::Down => Some(Msg::TaskCursor(1)),
         KeyCode::Char('n') => Some(Msg::OpenCreateTask),
-        KeyCode::Char('e') | KeyCode::Enter => tasks
-            .get(model.task_cursor)
-            .map(|t| Msg::OpenEditTask(t.project_id, t.id)),
-        KeyCode::Char(' ') => tasks
-            .get(model.task_cursor)
-            .map(|t| Msg::ToggleTaskSelection(t.id)),
-        KeyCode::Char('c') => Some(Msg::ClearTaskSelection),
-        KeyCode::Char('d') => tasks
-            .get(model.task_cursor)
-            .map(|t| Msg::DeleteTask(t.project_id, t.id)),
+        KeyCode::Char('e') | KeyCode::Enter => {
+            if let Some(t) = tasks.get(model.task_cursor) {
+                Some(Msg::OpenEditTask(t.project_id, t.id))
+            } else {
+                Some(Msg::ToastWarn("no task selected".into()))
+            }
+        }
+        KeyCode::Char(' ') => {
+            if let Some(t) = tasks.get(model.task_cursor) {
+                Some(Msg::ToggleTaskSelection(t.id))
+            } else {
+                Some(Msg::ToastWarn("no task selected".into()))
+            }
+        }
+        KeyCode::Char('d') => {
+            if let Some(t) = tasks.get(model.task_cursor) {
+                Some(Msg::DeleteTask(t.project_id, t.id))
+            } else {
+                Some(Msg::ToastWarn("no task selected".into()))
+            }
+        }
         // Switch the "target project" without leaving the Tasks screen.
         // Mirrors the way Enter picks a project on the Projects tab.
         KeyCode::Char('p') => Some(Msg::OpenProjectPicker),
@@ -67,7 +78,7 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, model: &Model) {
         ),
         Span::raw("   "),
         Span::styled(
-            "n=new  e=edit  p=pick project  space=multi-select  c=clear  x=dispatch  d=delete",
+            "n=new  e=edit  p=pick project  space=multi-select  x=dispatch  d=delete",
             Style::default().fg(Color::DarkGray),
         ),
     ]))

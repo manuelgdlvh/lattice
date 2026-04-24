@@ -4,7 +4,6 @@ members = [
     "crates/lattice-core",
     "crates/lattice-store",
     "crates/lattice-agents",
-    "crates/lattice-components",
     "crates/lattice-tui",
     "crates/lattice-bin",
 ]
@@ -42,7 +41,6 @@ too_many_lines = "allow"
 lattice-core = { path = "crates/lattice-core" }
 lattice-store = { path = "crates/lattice-store" }
 lattice-agents = { path = "crates/lattice-agents" }
-lattice-components = { path = "crates/lattice-components" }
 lattice-tui = { path = "crates/lattice-tui" }
 
 # Serialization

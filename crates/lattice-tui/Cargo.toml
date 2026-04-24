@@ -15,7 +15,6 @@ workspace = true
 lattice-core.workspace = true
 lattice-store.workspace = true
 lattice-agents.workspace = true
-lattice-components.workspace = true
 ratatui.workspace = true
 crossterm.workspace = true
 futures-util.workspace = true
