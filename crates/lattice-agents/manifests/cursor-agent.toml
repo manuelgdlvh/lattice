@@ -1,0 +1,31 @@
+# Bundled agent manifest for Cursor Agent.
+#
+# Users do not need to copy this file anywhere — it ships embedded in
+# the lattice binary and is automatically registered if `cursor-agent`
+# is found on $PATH. If the user drops a file with the same `id` into
+# `$LATTICE_CONFIG_DIR/agents/cursor-agent.toml`, that one wins.
+
+id = "cursor-agent"
+display_name = "Cursor Agent"
+binary = "cursor-agent"
+
+[detect]
+args = ["--version"]
+# Match a leading "cursor-agent" token and capture the version token
+# that follows. Works for `cursor-agent 0.42.1` and similar shapes.
+version_regex = '^cursor-agent\s+(\S+)'
+timeout_ms = 2000
+
+[invocation]
+mode = "stdin"
+# Run headless so output is captured into lattice logs. `--trust` avoids
+# interactive trust prompts that would otherwise wedge a background run.
+args = ["--print", "--trust"]
+
+[runtime]
+kill_grace_ms = 5000
+
+# Default working_dir is `project`; no explicit block needed.
+
+[env]
+NO_COLOR = "1"

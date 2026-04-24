@@ -1,0 +1,33 @@
+---
+source: crates/lattice-core/tests/render_golden.rs
+expression: out
+---
+## Context
+You are fixing a specific, reproducible bug. Keep the diff minimal and
+write a failing test first if one does not already exist.
+
+Project: `acme-backend` at `/home/manu/code/acme-backend`
+
+## Bug
+Ticket: `PAY-1234`
+
+Symptom:
+> Rate limiter returns 500 instead of 429 when Redis is slow.
+
+Reproduction:
+> 1. Point REDIS_URL at a slow instance.
+> 2. Burst 100 req/s for 10s.
+> 3. Observe 500s.
+
+## Constraints
+- Produce a failing test first, then make it pass.
+- Scope: **surface-fix** — minimal patch only.
+- No unrelated refactors.
+
+## Acceptance Criteria
+- `cargo test` green.
+- A new regression test proves the bug cannot recur.
+- `git log` shows a single commit with the ticket id.
+
+## Deliverables
+A PR-ready diff with a commit message referencing `PAY-1234`.

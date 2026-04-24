@@ -1,0 +1,42 @@
+[package]
+name = "lattice-agents"
+description = "Agent manifests, detection, and process supervision for lattice."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+lattice-core.workspace = true
+lattice-store.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+tokio = { workspace = true, features = ["process", "io-util", "fs", "sync", "rt", "macros", "time"] }
+async-trait.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+which.workspace = true
+time.workspace = true
+regex.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["full", "test-util"] }
+
+# The fake agent is compiled as a real binary so integration tests can
+# spawn it like any other agent. Building it is cheap (a few hundred
+# lines), and gating behind `cfg(test)` + `required-features` keeps it
+# invisible to consumers of the library.
+[[bin]]
+name = "lattice-fake-agent"
+path = "src/bin/fake_agent.rs"
+# Not a user-facing binary. It is however a `cdylib`-like utility that
+# integration tests build + run, so we don't hide it behind a feature
+# flag (that would prevent tests from resolving its path via
+# `env!("CARGO_BIN_EXE_lattice-fake-agent")`).

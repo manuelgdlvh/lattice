@@ -1,0 +1,30 @@
+---
+source: crates/lattice-core/tests/render_golden.rs
+expression: out
+---
+## Context
+You are a senior Rust engineer.
+
+Project: `acme-backend` at `/home/manu/code/acme-backend`
+
+## Inputs
+- **acceptance**: ["tests-green", "clippy-clean"]
+- **constraints**: ["no-new-deps", "preserve-public-api"]
+- **goal**: Refactor auth middleware for testability.
+
+
+## Constraints
+- no-new-deps
+- preserve-public-api
+
+
+## Acceptance Criteria
+- tests-green
+- clippy-clean
+
+
+## Deliverables
+A minimal, reviewable change.
+
+## References
+- _none_

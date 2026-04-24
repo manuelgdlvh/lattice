@@ -1,0 +1,29 @@
+[package]
+name = "lattice-bin"
+description = "lattice binary — task-first schema-driven AI dev orchestrator."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "lattice"
+path = "src/main.rs"
+
+[dependencies]
+lattice-core.workspace = true
+lattice-store.workspace = true
+lattice-agents.workspace = true
+lattice-components.workspace = true
+lattice-tui.workspace = true
+anyhow.workspace = true
+tokio = { workspace = true, features = ["full"] }
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
+directories.workspace = true
+tempfile = "3"

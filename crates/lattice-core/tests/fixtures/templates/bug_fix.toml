@@ -1,0 +1,69 @@
+schema_version = 1
+id          = "00000000-0000-0000-0000-000000000000"
+name        = "bug-fix"
+description = "Fix a reported bug with failing test and minimal diff."
+version     = 1
+created_at  = "2026-04-20T09:00:00Z"
+updated_at  = "2026-04-20T09:00:00Z"
+
+[preamble]
+markdown = """
+You are fixing a specific, reproducible bug. Keep the diff minimal and
+write a failing test first if one does not already exist."""
+
+[[fields]]
+id = "ticket"
+kind = "text"
+label = "Ticket / issue reference"
+required = true
+[fields.validation]
+regex = "^[A-Z]+-[0-9]+$"
+
+[[fields]]
+id = "symptom"
+kind = "textarea"
+label = "Observed symptom"
+required = true
+
+[[fields]]
+id = "repro_steps"
+kind = "textarea"
+label = "Reproduction steps"
+required = true
+
+[[fields]]
+id = "scope"
+kind = "select"
+label = "Scope"
+required = true
+options = ["surface-fix", "root-cause"]
+
+[prompt]
+template = """
+## Context
+{{ preamble }}
+
+Project: `{{ project.name }}` at `{{ project.path }}`
+
+## Bug
+Ticket: `{{ task.fields.ticket }}`
+
+Symptom:
+{{ task.fields.symptom | quote }}
+
+Reproduction:
+{{ task.fields.repro_steps | quote }}
+
+## Constraints
+- Produce a failing test first, then make it pass.
+- Scope: **{{ task.fields.scope }}** — {% if task.fields.scope == 'surface-fix' %}minimal patch only{% else %}eliminate the root cause, even if diff grows{% endif %}.
+- No unrelated refactors.
+
+## Acceptance Criteria
+- `cargo test` green.
+- A new regression test proves the bug cannot recur.
+- `git log` shows a single commit with the ticket id.
+
+## Deliverables
+A PR-ready diff with a commit message referencing `{{ task.fields.ticket }}`.
+"""
