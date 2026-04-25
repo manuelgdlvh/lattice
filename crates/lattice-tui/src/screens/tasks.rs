@@ -16,6 +16,13 @@ pub fn handle_key(model: &Model, key: KeyEvent) -> Option<Msg> {
         KeyCode::Up => Some(Msg::TaskCursor(-1)),
         KeyCode::Down => Some(Msg::TaskCursor(1)),
         KeyCode::Char('n') => Some(Msg::OpenCreateTask),
+        KeyCode::Char('w') => {
+            if let Some(t) = tasks.get(model.task_cursor) {
+                Some(Msg::OpenSaveTaskPrompt(t.project_id, t.id))
+            } else {
+                Some(Msg::ToastWarn("no task selected".into()))
+            }
+        }
         KeyCode::Char('e') | KeyCode::Enter => {
             if let Some(t) = tasks.get(model.task_cursor) {
                 Some(Msg::OpenEditTask(t.project_id, t.id))
@@ -78,7 +85,7 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, model: &Model) {
         ),
         Span::raw("   "),
         Span::styled(
-            "n=new  e=edit  p=pick project  space=multi-select  x=dispatch  d=delete",
+            "n=new  e=edit  w=write prompt  p=pick project  space=multi-select  x=dispatch  d=delete",
             Style::default().fg(Color::DarkGray),
         ),
     ]))

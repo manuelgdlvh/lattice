@@ -77,13 +77,13 @@ pub fn translate(model: &Model, key: KeyEvent) -> Option<Msg> {
             KeyCode::Right => Some(Msg::SeqEdMoveParticipant(1)),
             KeyCode::Char('p') => Some(Msg::SeqEdStartAddParticipant),
             KeyCode::Char('m') => Some(Msg::SeqEdStartAddMessage),
+            KeyCode::Char('c') => Some(Msg::SeqEdStartEditEdgeContext),
             KeyCode::Char('x') => Some(Msg::SeqEdDeleteEvent),
             KeyCode::Char('X') => Some(Msg::SeqEdDeleteParticipant),
             KeyCode::Char('n') => Some(Msg::SeqEdStartAddDiagram),
             KeyCode::Char('r') => Some(Msg::SeqEdStartRenameDiagram),
             KeyCode::Char('D') => Some(Msg::SeqEdDeleteDiagram),
             KeyCode::Tab => Some(Msg::SeqEdMoveDiagram(1)),
-            KeyCode::BackTab => Some(Msg::SeqEdMoveDiagram(-1)),
             _ => None,
         };
     }
@@ -293,6 +293,10 @@ pub const SCREEN_KEYS: &[KeybindHelp] = &[
     KeybindHelp {
         key: "x",
         description: "Dispatch selected tasks (Tasks)",
+    },
+    KeybindHelp {
+        key: "w",
+        description: "Write selected task prompt to markdown (Tasks)",
     },
     KeybindHelp {
         key: "k",

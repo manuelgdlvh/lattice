@@ -107,6 +107,15 @@ fn truncate(v: Value, n: i64) -> Result<Value, Error> {
 /// Output is always fenced as a Mermaid code block.
 fn sequence_gram(v: Value) -> Result<Value, Error> {
     let raw = value_to_string(&v);
+    // If the user provided already-fenced Mermaid (or multiple diagrams rendered
+    // by the sequence editor), pass it through unchanged. This avoids nesting
+    // ```mermaid fences when templates use `| sequence_gram` on a field that
+    // already contains fenced blocks.
+    //
+    // Heuristic: the editor output always includes ```mermaid fences.
+    if raw.contains("```mermaid") {
+        return Ok(Value::from(raw));
+    }
     let mut lines: Vec<&str> = raw.lines().collect();
 
     // Trim leading/trailing blank lines without allocating a new string.
@@ -249,5 +258,12 @@ mod tests {
             serde_json::json!({ "s": "sequenceDiagram\n  A->>B: Hi" }),
         );
         assert!(out.starts_with("```mermaid\nsequenceDiagram\n  A->>B: Hi\n```"));
+    }
+
+    #[test]
+    fn sequence_gram_passes_through_pre_fenced_mermaid() {
+        let src = "## Diagram\n```mermaid\nsequenceDiagram\n  participant A\n```\n";
+        let out = render("{{ s | sequence_gram }}", serde_json::json!({ "s": src }));
+        assert_eq!(out, src);
     }
 }

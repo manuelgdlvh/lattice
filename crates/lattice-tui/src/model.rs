@@ -147,6 +147,9 @@ pub enum SequenceEditorMode {
         dashed: bool,
         input: String,
     },
+    EditEdgeContext {
+        input: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -155,7 +158,9 @@ pub enum SequenceEvent {
         from: String,
         to: String,
         dashed: bool,
+        rel_id: String,
         text: String,
+        edge_context: Option<String>,
     },
 }
 
@@ -363,6 +368,7 @@ pub enum FormSubmit {
     EditTemplate(TemplateId),
     CreateTask(ProjectId, TemplateId),
     EditTask(ProjectId, TaskId),
+    SaveTaskPromptToFile(ProjectId, TaskId),
 }
 
 impl Default for Model {
@@ -514,6 +520,7 @@ pub enum Msg {
     /// the Templates screen where a template is already in focus.
     OpenCreateTaskWith(TemplateId),
     OpenEditTask(ProjectId, TaskId),
+    OpenSaveTaskPrompt(ProjectId, TaskId),
     // Generic picker overlay. Items each carry their own accept Msg,
     // so the picker itself is reusable for templates, projects, agents,
     // etc.
@@ -556,6 +563,7 @@ pub enum Msg {
     SeqEdToggleDashed,
     SeqEdCycleFrom(isize),
     SeqEdCycleTo(isize),
+    SeqEdStartEditEdgeContext,
     SeqEdConfirm,
     SeqEdDeleteEvent,
     SeqEdDeleteParticipant,
@@ -1032,6 +1040,32 @@ pub fn update(model: &mut Model, msg: Msg) -> Option<Cmd> {
             });
             None
         }
+        Msg::OpenSaveTaskPrompt(pid, task_id) => {
+            let Some(tasks) = model.tasks_by_project.get(&pid) else {
+                model
+                    .toasts
+                    .push(Toast::new(ToastLevel::Warn, "task not found"));
+                return None;
+            };
+            let Some(task) = tasks.iter().find(|t| t.id == task_id) else {
+                model
+                    .toasts
+                    .push(Toast::new(ToastLevel::Warn, "task not found"));
+                return None;
+            };
+            model.form = Some(FormState {
+                title: format!("Save prompt · {}", task.name),
+                fields: vec![FormField::plain(
+                    "File name",
+                    task.name.clone(),
+                    true,
+                    false,
+                )],
+                cursor: 0,
+                submit: FormSubmit::SaveTaskPromptToFile(pid, task_id),
+            });
+            None
+        }
         Msg::PickerMove(d) => {
             if let Some(p) = model.picker.as_mut()
                 && !p.items.is_empty()
@@ -1294,8 +1328,12 @@ pub fn update(model: &mut Model, msg: Msg) -> Option<Cmd> {
                 && matches!(ed.mode, SequenceEditorMode::Browse)
                 && !ed.diagrams.is_empty()
             {
-                ed.diagram_cursor =
-                    apply_delta(ed.diagram_cursor, d, ed.diagrams.len().saturating_sub(1));
+                // Circular with one key (Tab): wrap around.
+                let n = i128::try_from(ed.diagrams.len()).unwrap_or(1).max(1);
+                let cur = i128::try_from(ed.diagram_cursor).unwrap_or(0);
+                let delta = i128::try_from(d).unwrap_or(0);
+                let wrapped = ((cur + delta) % n + n) % n;
+                ed.diagram_cursor = usize::try_from(wrapped).unwrap_or(0);
                 ed.event_cursor = 0;
                 ed.participant_cursor = 0;
             }
@@ -1322,6 +1360,25 @@ pub fn update(model: &mut Model, msg: Msg) -> Option<Cmd> {
                     dashed: false,
                     input: String::new(),
                 };
+            }
+            None
+        }
+        Msg::SeqEdStartEditEdgeContext => {
+            if let Some(ed) = &mut model.sequence_editor
+                && matches!(ed.mode, SequenceEditorMode::Browse)
+            {
+                let Some(diag) = ed.diagrams.get(ed.diagram_cursor) else {
+                    return None;
+                };
+                let Some(ev) = diag.events.get(ed.event_cursor) else {
+                    return None;
+                };
+                let current = match ev {
+                    SequenceEvent::Message { edge_context, .. } => {
+                        edge_context.as_deref().unwrap_or_default().to_string()
+                    }
+                };
+                ed.mode = SequenceEditorMode::EditEdgeContext { input: current };
             }
             None
         }
@@ -1368,6 +1425,7 @@ pub fn update(model: &mut Model, msg: Msg) -> Option<Cmd> {
                     SequenceEditorMode::AddDiagram { input } => input.push(c),
                     SequenceEditorMode::RenameDiagram { input } => input.push(c),
                     SequenceEditorMode::AddMessage { input, .. } => input.push(c),
+                    SequenceEditorMode::EditEdgeContext { input } => input.push(c),
                     SequenceEditorMode::Browse => {}
                 }
             }
@@ -1386,6 +1444,9 @@ pub fn update(model: &mut Model, msg: Msg) -> Option<Cmd> {
                         input.pop();
                     }
                     SequenceEditorMode::AddMessage { input, .. } => {
+                        input.pop();
+                    }
+                    SequenceEditorMode::EditEdgeContext { input } => {
                         input.pop();
                     }
                     SequenceEditorMode::Browse => {}
@@ -1444,13 +1505,34 @@ pub fn update(model: &mut Model, msg: Msg) -> Option<Cmd> {
                             let from = diag.participants.get(from).cloned().unwrap_or_default();
                             let to = diag.participants.get(to).cloned().unwrap_or_default();
                             if !from.is_empty() && !to.is_empty() {
+                                let rel_id = next_relation_id(diag);
                                 diag.events.push(SequenceEvent::Message {
                                     from,
                                     to,
                                     dashed,
+                                    rel_id,
                                     text: text.to_string(),
+                                    edge_context: None,
                                 });
                                 ed.event_cursor = diag.events.len().saturating_sub(1);
+                            }
+                        }
+                    }
+                    SequenceEditorMode::EditEdgeContext { input } => {
+                        let Some(diag) = ed.diagrams.get_mut(ed.diagram_cursor) else {
+                            return None;
+                        };
+                        let Some(ev) = diag.events.get_mut(ed.event_cursor) else {
+                            return None;
+                        };
+                        let txt = input.trim();
+                        match ev {
+                            SequenceEvent::Message { edge_context, .. } => {
+                                if txt.is_empty() {
+                                    *edge_context = None;
+                                } else {
+                                    *edge_context = Some(txt.to_string());
+                                }
                             }
                         }
                     }
@@ -1630,7 +1712,13 @@ fn parse_sequence_gram(src: &str) -> Vec<SequenceDiagram> {
                 .take()
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| format!("Diagram {}", diagrams.len() + 1));
-            diagrams.push(parse_mermaid_diagram(&name, &buf.join("\n")));
+            let parsed = parse_mermaid_diagram(&name, &buf.join("\n"));
+            // Drop empty placeholder diagrams (e.g. a fenced block that only
+            // contains `sequenceDiagram`). These often appear as “source of truth”
+            // stubs in prompts and should not round-trip into an extra diagram.
+            if !(parsed.participants.is_empty() && parsed.events.is_empty()) {
+                diagrams.push(parsed);
+            }
             buf.clear();
             continue;
         }
@@ -1641,16 +1729,34 @@ fn parse_sequence_gram(src: &str) -> Vec<SequenceDiagram> {
     }
 
     if !diagrams.is_empty() {
-        return diagrams;
+        // Extra safety: if any empty diagrams slipped through (e.g. weirdly
+        // formatted input), drop them.
+        diagrams.retain(|d| !(d.participants.is_empty() && d.events.is_empty()));
+        if !diagrams.is_empty() {
+            return diagrams;
+        }
     }
 
     // Fallback: treat as a single diagram body.
-    vec![parse_mermaid_diagram("Diagram", src)]
+    let one = parse_mermaid_diagram("Diagram", src);
+    if one.participants.is_empty() && one.events.is_empty() {
+        // Keep exactly one empty diagram so the editor still has something to show.
+        vec![SequenceDiagram {
+            name: "Diagram".into(),
+            participants: Vec::new(),
+            events: Vec::new(),
+        }]
+    } else {
+        vec![one]
+    }
 }
 
 fn parse_mermaid_diagram(name: &str, body: &str) -> SequenceDiagram {
     let mut participants: Vec<String> = Vec::new();
     let mut events: Vec<SequenceEvent> = Vec::new();
+    let mut edge_contexts: std::collections::BTreeMap<String, String> =
+        std::collections::BTreeMap::new();
+    let mut in_edge_context = false;
     for line in body.lines() {
         let l = line.trim();
         if l.is_empty() || l.starts_with("```") {
@@ -1658,6 +1764,44 @@ fn parse_mermaid_diagram(name: &str, body: &str) -> SequenceDiagram {
         }
         if l.starts_with("sequenceDiagram") {
             continue;
+        }
+        // EdgeContext block parsing: supports both legacy `%%`-commented
+        // lines and the new plain-text block.
+        let (is_comment, rest) = if let Some(r) = l.strip_prefix("%%") {
+            (true, r.trim())
+        } else {
+            (false, l)
+        };
+        if rest.eq_ignore_ascii_case("edgecontext:")
+            || rest.eq_ignore_ascii_case("edgecontext")
+            || rest.eq_ignore_ascii_case("context:")
+            || rest.eq_ignore_ascii_case("context")
+        {
+            in_edge_context = true;
+            continue;
+        }
+        if in_edge_context {
+            // Lines like: "[R1]: some text" (brackets optional, text may be blank).
+            let rest = rest.trim_start_matches('-').trim();
+            if let Some((lhs, rhs)) = rest.split_once(':') {
+                let id = lhs.trim().trim_start_matches('[').trim_end_matches(']');
+                let txt = rhs.trim();
+                if !id.is_empty() {
+                    if !txt.is_empty() {
+                        edge_contexts.insert(id.to_string(), txt.to_string());
+                    } else {
+                        edge_contexts.remove(id);
+                    }
+                }
+            }
+            // Only treat comment lines as part of the block unconditionally;
+            // for plain-text, we stay in the block until EOF (good enough for
+            // our generated format, which places EdgeContext at the end).
+            if is_comment {
+                continue;
+            }
+            // If this is not a comment line and doesn't match our `id:` shape,
+            // fall through so it can be parsed as a message line.
         }
         if let Some(rest) = l.strip_prefix("participant ") {
             let pname = rest.trim();
@@ -1676,12 +1820,35 @@ fn parse_mermaid_diagram(name: &str, body: &str) -> SequenceDiagram {
         let Some((lhs, rhs)) = l.split_once(sep) else {
             continue;
         };
+        let mut lhs = lhs.trim().to_string();
+        let mut rel_id_from_lhs: Option<String> = None;
+        // New format: "[R12] A->>B: msg" (rel id prefixed on the left)
+        if let Some(rest) = lhs.strip_prefix('[') {
+            if let Some((id, tail)) = rest.split_once(']') {
+                let id = id.trim();
+                if !id.is_empty() && !id.contains(' ') {
+                    rel_id_from_lhs = Some(id.to_string());
+                    lhs = tail.trim().to_string();
+                }
+            }
+        }
         let from = lhs.trim();
         let Some((to, text)) = rhs.split_once(':') else {
             continue;
         };
         let to = to.trim();
-        let text = text.trim();
+        let mut text = text.trim().to_string();
+        let mut rel_id: Option<String> = None;
+        // Legacy format: "A->>B: [R12] actual message"
+        if let Some(rest) = text.strip_prefix('[') {
+            if let Some((id, tail)) = rest.split_once(']') {
+                let id = id.trim();
+                if !id.is_empty() && !id.contains(' ') {
+                    rel_id = Some(id.to_string());
+                    text = tail.trim().to_string();
+                }
+            }
+        }
         if from.is_empty() || to.is_empty() || text.is_empty() {
             continue;
         }
@@ -1690,12 +1857,28 @@ fn parse_mermaid_diagram(name: &str, body: &str) -> SequenceDiagram {
                 participants.push(pname.to_string());
             }
         }
+        let rel_id = rel_id
+            .or(rel_id_from_lhs)
+            .unwrap_or_else(|| format!("R{}", events.len() + 1));
         events.push(SequenceEvent::Message {
             from: from.to_string(),
             to: to.to_string(),
             dashed,
+            rel_id,
             text: text.to_string(),
+            edge_context: None,
         });
+    }
+    // Attach parsed edge context to matching rel_ids.
+    for ev in &mut events {
+        let SequenceEvent::Message {
+            rel_id,
+            edge_context,
+            ..
+        } = ev;
+        if let Some(txt) = edge_contexts.get(rel_id) {
+            *edge_context = Some(txt.clone());
+        }
     }
     SequenceDiagram {
         name: name.to_string(),
@@ -1720,6 +1903,20 @@ fn render_sequence_gram(diagrams: &[SequenceDiagram]) -> String {
     out
 }
 
+fn next_relation_id(diag: &SequenceDiagram) -> String {
+    // Default format: R1, R2, ... unique within a diagram.
+    let mut max_n: u64 = 0;
+    for ev in &diag.events {
+        let SequenceEvent::Message { rel_id, .. } = ev;
+        if let Some(rest) = rel_id.strip_prefix('R') {
+            if let Ok(n) = rest.parse::<u64>() {
+                max_n = max_n.max(n);
+            }
+        }
+    }
+    format!("R{}", max_n.saturating_add(1))
+}
+
 fn render_mermaid_body(participants: &[String], events: &[SequenceEvent]) -> String {
     let mut out = String::new();
     out.push_str("sequenceDiagram\n");
@@ -1734,18 +1931,46 @@ fn render_mermaid_body(participants: &[String], events: &[SequenceEvent]) -> Str
                 from,
                 to,
                 dashed,
+                rel_id,
                 text,
+                edge_context,
             } => {
                 let arrow = if *dashed { "-->>" } else { "->>" };
                 out.push_str("    ");
+                out.push('[');
+                out.push_str(rel_id);
+                out.push_str("] ");
                 out.push_str(from);
                 out.push_str(arrow);
                 out.push_str(to);
                 out.push_str(": ");
                 out.push_str(text);
                 out.push('\n');
+                let _ = edge_context; // handled in EdgeContext block below
             }
         }
+    }
+    // EdgeContext block: always emitted, one line per relation id.
+    // No leading `%%` and left-aligned, per user request.
+    out.push_str("edgeContext:\n");
+    for ev in events {
+        let SequenceEvent::Message {
+            rel_id,
+            edge_context,
+            ..
+        } = ev;
+        out.push('[');
+        out.push_str(rel_id);
+        out.push_str("]:");
+        if let Some(c) = edge_context
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            out.push(' ');
+            out.push_str(c);
+        }
+        out.push('\n');
     }
     out
 }
@@ -1908,6 +2133,32 @@ mod tests {
         assert_eq!(m.screen, Screen::Templates);
         update(&mut m, Msg::PrevTab);
         assert_eq!(m.screen, Screen::Projects);
+    }
+
+    #[test]
+    fn sequence_gram_roundtrips_with_relation_ids_and_edge_context() {
+        let src = r#"sequenceDiagram
+participant A
+participant B
+A->>B: [R1] Do the thing
+edgeContext:
+[R1]: Must be idempotent
+"#;
+        let d = parse_mermaid_diagram("D", src);
+        assert_eq!(d.events.len(), 1);
+        let SequenceEvent::Message {
+            rel_id,
+            edge_context,
+            text,
+            ..
+        } = &d.events[0];
+        assert_eq!(rel_id, "R1");
+        assert_eq!(text, "Do the thing");
+        assert_eq!(edge_context.as_deref(), Some("Must be idempotent"));
+
+        let rendered = render_mermaid_body(&d.participants, &d.events);
+        assert!(rendered.contains("[R1] A->>B: Do the thing"));
+        assert!(rendered.contains("[R1]: Must be idempotent"));
     }
 
     #[test]
@@ -2292,5 +2543,28 @@ required = true
         assert!(m.picker.is_none(), "no picker without installed agent");
         assert_eq!(m.toasts.len(), 1);
         assert_eq!(m.toasts[0].level, crate::toast::ToastLevel::Error);
+    }
+
+    #[test]
+    fn open_save_task_prompt_opens_form() {
+        let now = Timestamp::parse("2026-04-24T10:00:00Z").unwrap();
+        let mut m = Model::new();
+        let pid = ProjectId::new();
+        m.selected_project = Some(pid);
+        let mut t = lattice_core::entities::Task::new(pid, TemplateId::new(), 1, "demo", now);
+        t.status = lattice_core::entities::TaskStatus::Draft;
+        let tid = t.id;
+        m.tasks_by_project.insert(pid, vec![t]);
+
+        update(&mut m, Msg::OpenSaveTaskPrompt(pid, tid));
+        let form = m.form.as_ref().expect("save form should open");
+        assert!(form.title.contains("Save prompt"));
+        assert_eq!(form.fields.len(), 1);
+        assert_eq!(form.fields[0].label, "File name");
+        assert_eq!(form.fields[0].value, "demo");
+        assert!(matches!(
+            form.submit,
+            FormSubmit::SaveTaskPromptToFile(p, t) if p == pid && t == tid
+        ));
     }
 }

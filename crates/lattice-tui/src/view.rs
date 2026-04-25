@@ -84,8 +84,6 @@ fn render_sequence_editor(
             Span::raw(" cancel  "),
             Span::styled("Tab", Style::default().fg(Color::Cyan)),
             Span::raw(" next diagram  "),
-            Span::styled("Shift+Tab", Style::default().fg(Color::Cyan)),
-            Span::raw(" prev  "),
             Span::styled("n", Style::default().fg(Color::Cyan)),
             Span::raw(" new diagram  "),
             Span::styled("r", Style::default().fg(Color::Cyan)),
@@ -96,6 +94,8 @@ fn render_sequence_editor(
             Span::raw(" add participant  "),
             Span::styled("m", Style::default().fg(Color::Cyan)),
             Span::raw(" add message  "),
+            Span::styled("c", Style::default().fg(Color::Cyan)),
+            Span::raw(" edge context  "),
             Span::styled("x", Style::default().fg(Color::Cyan)),
             Span::raw(" del event  "),
             Span::styled("X", Style::default().fg(Color::Cyan)),
@@ -193,10 +193,24 @@ fn render_sequence_editor(
                     from,
                     to,
                     dashed,
+                    rel_id,
                     text,
+                    edge_context,
                 } => {
                     let arrow = if *dashed { "-->>" } else { "->>" };
-                    (format!("{from} {arrow} {to}: {text}"), Style::default())
+                    let marker = if edge_context
+                        .as_deref()
+                        .map(str::trim)
+                        .is_some_and(|s| !s.is_empty())
+                    {
+                        "  [ctx]"
+                    } else {
+                        ""
+                    };
+                    (
+                        format!("[{rel_id}] {from} {arrow} {to}: {text}{marker}"),
+                        Style::default(),
+                    )
                 }
             };
             let marker = if i == ed.event_cursor { "▶ " } else { "  " };
@@ -216,7 +230,7 @@ fn render_sequence_editor(
     // Footer/input.
     let footer = match &ed.mode {
         crate::model::SequenceEditorMode::Browse => Line::from(Span::styled(
-            "Tip: press F3 from the form to open this editor.",
+            "Tip: press c to edit EdgeContext for selected message.",
             Style::default().fg(Color::DarkGray),
         )),
         crate::model::SequenceEditorMode::AddParticipant { input } => Line::from(vec![
@@ -277,6 +291,18 @@ fn render_sequence_editor(
                 ),
             ])
         }
+        crate::model::SequenceEditorMode::EditEdgeContext { input } => Line::from(vec![
+            Span::styled(
+                "EdgeContext: ",
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(input.clone()),
+            Span::styled("▌", Style::default().fg(Color::Cyan)),
+            Span::styled(
+                "  Enter=save  Esc=cancel",
+                Style::default().fg(Color::DarkGray),
+            ),
+        ]),
     };
     let foot = Paragraph::new(vec![footer])
         .wrap(Wrap { trim: false })
@@ -350,7 +376,9 @@ fn render_sequence_preview(
                 from,
                 to,
                 dashed,
-                text,
+                rel_id,
+                text: _,
+                ..
             } => {
                 let from_i = diag.participants.iter().position(|p| p == from);
                 let to_i = diag.participants.iter().position(|p| p == to);
@@ -364,15 +392,15 @@ fn render_sequence_preview(
                             row[loop_start] = '↺';
                         }
                         let label_max = 18usize;
-                        let label = if text.chars().count() > label_max {
-                            let mut s = text
+                        let label = if rel_id.chars().count() > label_max {
+                            let mut s = rel_id
                                 .chars()
                                 .take(label_max.saturating_sub(1))
                                 .collect::<String>();
                             s.push('…');
                             s
                         } else {
-                            text.clone()
+                            rel_id.clone()
                         };
                         for (k, ch) in label.chars().enumerate() {
                             let pos = loop_start.saturating_add(2 + k);
@@ -399,7 +427,8 @@ fn render_sequence_preview(
                     }
 
                     // Inline label: place near the midpoint.
-                    let label = text;
+                    // Keep label short: prefer relation id so it doesn't overflow.
+                    let label = rel_id;
                     let mid = l + (r - l) / 2;
                     let label_max = 18usize;
                     let label = if label.chars().count() > label_max {

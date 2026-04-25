@@ -21,6 +21,8 @@ use lattice_core::entities::{Project, Task, Template};
 use lattice_core::ids::ProjectId;
 use lattice_core::time::Timestamp;
 
+use lattice_store::fs::atomic_write_str;
+
 use crate::context::AppContext;
 use crate::event::{AppEvent, spawn_terminal_reader};
 use crate::keybind::translate;
@@ -880,6 +882,112 @@ impl App {
                 ));
                 self.reload_tasks_runs(model).await;
             }
+            FormSubmit::SaveTaskPromptToFile(pid, task_id) => {
+                let raw_name = form
+                    .fields
+                    .first()
+                    .map(|f| f.value.clone())
+                    .unwrap_or_default();
+                let file_stem = sanitize_filename(&raw_name);
+                if file_stem.is_empty() {
+                    model.form = Some(backup);
+                    model.toasts.push(crate::toast::Toast::new(
+                        crate::toast::ToastLevel::Warn,
+                        "file name is required",
+                    ));
+                    return;
+                }
+                let file_name = if file_stem.ends_with(".md") {
+                    file_stem
+                } else {
+                    format!("{file_stem}.md")
+                };
+
+                let cwd = match std::env::current_dir() {
+                    Ok(d) => d,
+                    Err(e) => {
+                        model.form = Some(backup);
+                        model.toasts.push(crate::toast::Toast::new(
+                            crate::toast::ToastLevel::Error,
+                            format!("current_dir: {e}"),
+                        ));
+                        return;
+                    }
+                };
+                let dest = cwd.join(&file_name);
+
+                // Prefer the stored rendered prompt (fast, exactly what the app rendered).
+                // If missing, re-render from the latest template/task/project.
+                let prompt_path = self
+                    .ctx
+                    .paths
+                    .task_prompt(&pid.to_string(), &task_id.to_string());
+                let prompt = match tokio::fs::read_to_string(&prompt_path).await {
+                    Ok(s) if !s.trim().is_empty() => s,
+                    _ => {
+                        let Some(task) = self.ctx.tasks.load(pid, task_id).await.ok().flatten()
+                        else {
+                            model.form = Some(backup);
+                            model.toasts.push(crate::toast::Toast::new(
+                                crate::toast::ToastLevel::Error,
+                                "task not found",
+                            ));
+                            return;
+                        };
+                        let Some(project) = self.ctx.projects.load(pid).await.ok().flatten() else {
+                            model.form = Some(backup);
+                            model.toasts.push(crate::toast::Toast::new(
+                                crate::toast::ToastLevel::Error,
+                                "project not found",
+                            ));
+                            return;
+                        };
+                        let Some(tpl) = self
+                            .ctx
+                            .templates
+                            .load(task.template_id)
+                            .await
+                            .ok()
+                            .flatten()
+                        else {
+                            model.form = Some(backup);
+                            model.toasts.push(crate::toast::Toast::new(
+                                crate::toast::ToastLevel::Error,
+                                "template not found",
+                            ));
+                            return;
+                        };
+                        match lattice_core::prompt::render(&tpl, &task, &project, Timestamp::now())
+                        {
+                            Ok(p) => p,
+                            Err(e) => {
+                                model.form = Some(backup);
+                                model.toasts.push(crate::toast::Toast::new(
+                                    crate::toast::ToastLevel::Error,
+                                    format!("render prompt: {e}"),
+                                ));
+                                return;
+                            }
+                        }
+                    }
+                };
+
+                // Wrap into a minimal markdown document.
+                let md = format!("{prompt}\n");
+                if let Err(e) = atomic_write_str(&dest, &md) {
+                    model.form = Some(backup);
+                    model.toasts.push(crate::toast::Toast::new(
+                        crate::toast::ToastLevel::Error,
+                        format!("write {}: {e}", dest.display()),
+                    ));
+                    return;
+                }
+
+                model.toasts.push(crate::toast::Toast::new(
+                    crate::toast::ToastLevel::Info,
+                    format!("wrote {}", dest.display()),
+                ));
+            }
         }
     }
 
@@ -953,6 +1061,33 @@ impl App {
         let list: Vec<_> = self.ctx.registry.list().into_iter().cloned().collect();
         let _ = update(model, Msg::SetAgents(list));
     }
+}
+
+fn sanitize_filename(input: &str) -> String {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    // Keep it strictly within the current directory: strip path separators
+    // and collapse unsafe characters.
+    let mut out = String::with_capacity(trimmed.len());
+    for ch in trimmed.chars() {
+        if matches!(ch, '/' | '\\') {
+            continue;
+        }
+        if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') {
+            out.push(ch);
+        } else if ch.is_whitespace() {
+            out.push('_');
+        }
+        // else: drop
+    }
+    let out = out.trim_matches('.').trim_matches('_').to_string();
+    // Prevent empty or dotfiles from being generated accidentally.
+    if out.is_empty() {
+        return String::new();
+    }
+    out
 }
 
 async fn read_tail_lines(
