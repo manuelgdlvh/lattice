@@ -2,8 +2,8 @@
 
 **Task-first, schema-driven AI dev orchestrator — in your terminal.**
 
-`lattice` is a TUI for orchestrating CLI coding agents (Cursor, Claude
-Code, …) around *tasks*, not chats. A task is an instance of a
+`lattice` is a TUI for orchestrating CLI coding agents around *tasks*, not chats. 
+A task is an instance of a
 template; a template defines the context, the schema-enforced fields
 the user must fill, and the markdown prompt that gets rendered for
 the agent. The idea is simple: **force structure in, get reviewable
@@ -11,7 +11,16 @@ detail out.**
 
 ---
 
-## Features (v0.1)
+<img width="2081" height="634" alt="image" src="https://github.com/user-attachments/assets/7fab2773-3a8e-4505-8908-bcbb8e44fe7f" />
+</br>
+
+<img width="2081" height="640" alt="image" src="https://github.com/user-attachments/assets/702e4402-74dd-43ca-9b64-a6e90f6ffcfd" />
+</br>
+
+<img width="2079" height="650" alt="image" src="https://github.com/user-attachments/assets/6b4bc8ee-10f7-4001-a6e6-f395c95a2871" />
+</br>
+
+## Features
 
 - **Projects** — register local directories as execution targets.
 - **Templates** — author schema-driven prompt templates with required
@@ -19,10 +28,6 @@ detail out.**
   plus a Jinja-rendered prompt body.
 - **Tasks** — instantiate a template against a project, fill the
   fields, preview the rendered prompt, then queue it up.
-- **Dispatch** — auto-detects installed CLI agents from bundled +
-  user TOML manifests under `$XDG_CONFIG_HOME/lattice/agents/`.
-- **Queue engine** — per-project FIFO, global concurrency cap,
-  fail-fast policy, crash-safe persistent queue.
 - **Runtime view** — live list of running agents, stdout tailing,
   kill button.
 - **History** — every completed run with exit status and logs.
@@ -98,19 +103,12 @@ running agent.
   spawns processes, tees stdout/stderr to the run directory, and
   exposes a `RunHandle` for subscribing to log lines and killing the
   process (SIGTERM → SIGKILL grace).
-- **Queue engine**: per-project FIFO workers gated by a global
-  `tokio::sync::Semaphore`. Tasks transition `draft → queued →
-  running → {succeeded, failed, killed, interrupted}`. Fail-fast
-  marks remaining queued tasks `interrupted`.
 
 ## Extending
 
 - **Adding an agent** — drop a TOML manifest under
   `$XDG_CONFIG_HOME/lattice/agents/<id>.toml` (see
   `crates/lattice-agents/src/registry/bundled/` for examples).
-- **Custom derived providers** — the `lattice-core` prompt
-  templating can pull structured values from `RealFs`, `RealCmd`, or
-  `RealEnv`; swap in fakes for offline tests.
 
 ## Development
 
@@ -121,14 +119,6 @@ cargo fmt --all
 ```
 
 Strict clippy and `unsafe_code = "forbid"` are enforced workspace-wide.
-
-## Roadmap
-
-- **v0.1** — this release.
-- **v0.2** — richer diff preview; pause / resume queues across restarts;
-  interactive agent REPL.
-- **v0.3+** — shared task library; team settings sync; agent output
-  post-processors.
 
 ## License
 
