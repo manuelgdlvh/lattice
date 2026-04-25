@@ -1693,13 +1693,105 @@ fn parse_sequence_gram(src: &str) -> Vec<SequenceDiagram> {
     let mut pending_name: Option<String> = None;
     let mut in_mermaid = false;
     let mut buf: Vec<String> = Vec::new();
+    // Edge context emitted outside Mermaid fences (our UI-friendly format).
+    // Applies to the next fenced Mermaid block we parse.
+    let mut pending_edge_contexts: std::collections::BTreeMap<String, String> =
+        std::collections::BTreeMap::new();
+    let mut in_edge_context = false;
+    let mut edge_ctx_current_id: Option<String> = None;
 
     for line in src.lines() {
         let l = line.trim_end();
         if !in_mermaid {
             if let Some(h) = l.strip_prefix("## ").or_else(|| l.strip_prefix("### ")) {
                 pending_name = Some(h.trim().to_string());
+                in_edge_context = false;
                 continue;
+            }
+            let t = l.trim();
+            let t_unbold = t.trim_matches('*').trim();
+            if t_unbold.eq_ignore_ascii_case("edgecontext:")
+                || t.eq_ignore_ascii_case("edgecontext")
+                || t.eq_ignore_ascii_case("context:")
+                || t.eq_ignore_ascii_case("context")
+            {
+                in_edge_context = true;
+                continue;
+            }
+            if in_edge_context {
+                // Stop the edgeContext block when the Mermaid fence begins.
+                // We must not consume the fence line here, otherwise we'd treat
+                // the entire Mermaid body as edge context.
+                if t == "```mermaid" {
+                    in_edge_context = false;
+                    edge_ctx_current_id = None;
+                } else {
+                if t.is_empty() {
+                    in_edge_context = false;
+                    edge_ctx_current_id = None;
+                    continue;
+                }
+                // Lines like:
+                // - "[R1] -> some text" (preferred)
+                // - "[R1]: some text" (legacy)
+                // - "[R1]" + newline + "some text" (preferred multi-line)
+                // - "- [R1] -> some text"
+                // - "R1: some text"
+                let rest = t.trim_start_matches('-').trim();
+                let rest_unbold = rest.trim_matches('*').trim();
+                // Multi-line format: a bare "[R1]" sets the current relation id,
+                // and subsequent lines become its context until another id/fence/heading.
+                if rest_unbold.starts_with('[')
+                    && rest_unbold.ends_with(']')
+                    && !rest_unbold.contains("->")
+                {
+                    let id = rest_unbold
+                        .trim()
+                        .trim_start_matches('[')
+                        .trim_end_matches(']');
+                    if !id.is_empty() {
+                        edge_ctx_current_id = Some(id.to_string());
+                        pending_edge_contexts.entry(id.to_string()).or_default();
+                        continue;
+                    }
+                }
+                let pair = rest_unbold
+                    .split_once("->")
+                    .or_else(|| rest.split_once(':'))
+                    .map(|(lhs, rhs)| (lhs.trim(), rhs.trim()));
+                if let Some((lhs, rhs)) = pair {
+                    let id = lhs.trim().trim_start_matches('[').trim_end_matches(']');
+                    let txt = rhs.trim();
+                    if !id.is_empty() {
+                        if txt.is_empty() {
+                            pending_edge_contexts.remove(id);
+                        } else {
+                            pending_edge_contexts.insert(id.to_string(), txt.to_string());
+                        }
+                    }
+                    edge_ctx_current_id = None;
+                    continue;
+                }
+                if let Some(id) = edge_ctx_current_id.clone() {
+                    let txt = rest;
+                    if !txt.is_empty() {
+                        pending_edge_contexts
+                            .entry(id)
+                            .and_modify(|cur| {
+                                if !cur.is_empty() {
+                                    cur.push('\n');
+                                }
+                                cur.push_str(txt);
+                            })
+                            .or_insert_with(|| txt.to_string());
+                        continue;
+                    }
+                }
+                // Not an edge-context mapping line; stop treating subsequent lines
+                // as part of the block.
+                in_edge_context = false;
+                edge_ctx_current_id = None;
+                }
             }
             if l.trim() == "```mermaid" {
                 in_mermaid = true;
@@ -1712,7 +1804,12 @@ fn parse_sequence_gram(src: &str) -> Vec<SequenceDiagram> {
                 .take()
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| format!("Diagram {}", diagrams.len() + 1));
-            let parsed = parse_mermaid_diagram(&name, &buf.join("\n"));
+            let mut parsed = parse_mermaid_diagram(&name, &buf.join("\n"));
+            // Apply any outside-the-fence edge context we collected.
+            if !pending_edge_contexts.is_empty() {
+                attach_edge_contexts(&mut parsed, &pending_edge_contexts);
+                pending_edge_contexts.clear();
+            }
             // Drop empty placeholder diagrams (e.g. a fenced block that only
             // contains `sequenceDiagram`). These often appear as “source of truth”
             // stubs in prompts and should not round-trip into an extra diagram.
@@ -1757,6 +1854,7 @@ fn parse_mermaid_diagram(name: &str, body: &str) -> SequenceDiagram {
     let mut edge_contexts: std::collections::BTreeMap<String, String> =
         std::collections::BTreeMap::new();
     let mut in_edge_context = false;
+    let mut edge_ctx_current_id: Option<String> = None;
     for line in body.lines() {
         let l = line.trim();
         if l.is_empty() || l.starts_with("```") {
@@ -1772,18 +1870,44 @@ fn parse_mermaid_diagram(name: &str, body: &str) -> SequenceDiagram {
         } else {
             (false, l)
         };
-        if rest.eq_ignore_ascii_case("edgecontext:")
-            || rest.eq_ignore_ascii_case("edgecontext")
-            || rest.eq_ignore_ascii_case("context:")
-            || rest.eq_ignore_ascii_case("context")
+        let rest_unbold = rest.trim_matches('*').trim();
+        if rest_unbold.eq_ignore_ascii_case("edgecontext:")
+            || rest_unbold.eq_ignore_ascii_case("edgecontext")
+            || rest_unbold.eq_ignore_ascii_case("context:")
+            || rest_unbold.eq_ignore_ascii_case("context")
         {
             in_edge_context = true;
+            edge_ctx_current_id = None;
             continue;
         }
         if in_edge_context {
-            // Lines like: "[R1]: some text" (brackets optional, text may be blank).
+            // Lines like:
+            // - "[R1] -> some text" (preferred)
+            // - "[R1]: some text" (legacy)
+            // Brackets optional, text may be blank.
             let rest = rest.trim_start_matches('-').trim();
-            if let Some((lhs, rhs)) = rest.split_once(':') {
+            let rest_unbold = rest.trim_matches('*').trim();
+            // Multi-line format: "[R1]" alone, followed by one or more lines.
+            if rest_unbold.starts_with('[')
+                && rest_unbold.ends_with(']')
+                && !rest_unbold.contains("->")
+            {
+                let id = rest_unbold
+                    .trim()
+                    .trim_start_matches('[')
+                    .trim_end_matches(']');
+                if !id.is_empty() {
+                    edge_ctx_current_id = Some(id.to_string());
+                    edge_contexts.entry(id.to_string()).or_default();
+                    // Always consume this line as an id marker.
+                    continue;
+                }
+            }
+            let pair = rest_unbold
+                .split_once("->")
+                .or_else(|| rest.split_once(':'))
+                .map(|(lhs, rhs)| (lhs.trim(), rhs.trim()));
+            if let Some((lhs, rhs)) = pair {
                 let id = lhs.trim().trim_start_matches('[').trim_end_matches(']');
                 let txt = rhs.trim();
                 if !id.is_empty() {
@@ -1792,6 +1916,21 @@ fn parse_mermaid_diagram(name: &str, body: &str) -> SequenceDiagram {
                     } else {
                         edge_contexts.remove(id);
                     }
+                }
+                edge_ctx_current_id = None;
+            }
+            if let Some(id) = edge_ctx_current_id.clone() {
+                // Treat any other line as part of the current id's context.
+                if !rest.is_empty() && !rest.contains(':') && !rest.contains("->") {
+                    edge_contexts
+                        .entry(id)
+                        .and_modify(|cur| {
+                            if !cur.is_empty() {
+                                cur.push('\n');
+                            }
+                            cur.push_str(rest);
+                        })
+                        .or_insert_with(|| rest.to_string());
                 }
             }
             // Only treat comment lines as part of the block unconditionally;
@@ -1887,6 +2026,22 @@ fn parse_mermaid_diagram(name: &str, body: &str) -> SequenceDiagram {
     }
 }
 
+fn attach_edge_contexts(
+    diag: &mut SequenceDiagram,
+    edge_contexts: &std::collections::BTreeMap<String, String>,
+) {
+    for ev in &mut diag.events {
+        let SequenceEvent::Message {
+            rel_id,
+            edge_context,
+            ..
+        } = ev;
+        if let Some(txt) = edge_contexts.get(rel_id) {
+            *edge_context = Some(txt.clone());
+        }
+    }
+}
+
 fn render_sequence_gram(diagrams: &[SequenceDiagram]) -> String {
     let mut out = String::new();
     for (i, d) in diagrams.iter().enumerate() {
@@ -1896,6 +2051,22 @@ fn render_sequence_gram(diagrams: &[SequenceDiagram]) -> String {
         out.push_str("## ");
         out.push_str(&d.name);
         out.push('\n');
+        // Edge context lives outside the Mermaid block so the Mermaid stays standard.
+        if !d.events.is_empty() {
+            out.push_str("**edgeContext:**\n");
+            for (idx, ev) in d.events.iter().enumerate() {
+                let SequenceEvent::Message { edge_context, .. } = ev;
+                let rel_id = format!("R{}", idx + 1);
+                out.push_str("**[");
+                out.push_str(&rel_id);
+                out.push_str("]**\n");
+                if let Some(c) = edge_context.as_deref().map(str::trim).filter(|s| !s.is_empty())
+                {
+                    out.push_str(c);
+                }
+                out.push('\n');
+            }
+        }
         out.push_str("```mermaid\n");
         out.push_str(&render_mermaid_body(&d.participants, &d.events));
         out.push_str("```\n");
@@ -1931,15 +2102,12 @@ fn render_mermaid_body(participants: &[String], events: &[SequenceEvent]) -> Str
                 from,
                 to,
                 dashed,
-                rel_id,
                 text,
                 edge_context,
+                rel_id: _,
             } => {
                 let arrow = if *dashed { "-->>" } else { "->>" };
                 out.push_str("    ");
-                out.push('[');
-                out.push_str(rel_id);
-                out.push_str("] ");
                 out.push_str(from);
                 out.push_str(arrow);
                 out.push_str(to);
@@ -1949,28 +2117,6 @@ fn render_mermaid_body(participants: &[String], events: &[SequenceEvent]) -> Str
                 let _ = edge_context; // handled in EdgeContext block below
             }
         }
-    }
-    // EdgeContext block: always emitted, one line per relation id.
-    // No leading `%%` and left-aligned, per user request.
-    out.push_str("edgeContext:\n");
-    for ev in events {
-        let SequenceEvent::Message {
-            rel_id,
-            edge_context,
-            ..
-        } = ev;
-        out.push('[');
-        out.push_str(rel_id);
-        out.push_str("]:");
-        if let Some(c) = edge_context
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        {
-            out.push(' ');
-            out.push_str(c);
-        }
-        out.push('\n');
     }
     out
 }
@@ -2141,8 +2287,9 @@ mod tests {
 participant A
 participant B
 A->>B: [R1] Do the thing
-edgeContext:
-[R1]: Must be idempotent
+**edgeContext:**
+**[R1]**
+Must be idempotent
 "#;
         let d = parse_mermaid_diagram("D", src);
         assert_eq!(d.events.len(), 1);
@@ -2156,9 +2303,27 @@ edgeContext:
         assert_eq!(text, "Do the thing");
         assert_eq!(edge_context.as_deref(), Some("Must be idempotent"));
 
-        let rendered = render_mermaid_body(&d.participants, &d.events);
-        assert!(rendered.contains("[R1] A->>B: Do the thing"));
-        assert!(rendered.contains("[R1]: Must be idempotent"));
+        let rendered = render_sequence_gram(&[d.clone()]);
+        // Mermaid block should be standard-compliant (no [R*] prefix, no edgeContext inside).
+        assert!(rendered.contains("```mermaid\nsequenceDiagram\n"));
+        assert!(rendered.contains("A->>B: Do the thing"));
+        assert!(!rendered.contains("[R1] A->>B"));
+        assert!(!rendered.contains("edgeContext:\nsequenceDiagram"));
+        // Edge context should live outside the Mermaid fence.
+        assert!(rendered.contains("**edgeContext:**\n**[R1]**\nMust be idempotent\n"));
+        // And it should parse back.
+        let parsed_back = parse_sequence_gram(&rendered);
+        assert_eq!(parsed_back.len(), 1);
+        assert_eq!(parsed_back[0].events.len(), 1);
+        let SequenceEvent::Message {
+            rel_id,
+            edge_context,
+            text,
+            ..
+        } = &parsed_back[0].events[0];
+        assert_eq!(rel_id, "R1");
+        assert_eq!(text, "Do the thing");
+        assert_eq!(edge_context.as_deref(), Some("Must be idempotent"));
     }
 
     #[test]

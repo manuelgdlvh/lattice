@@ -114,7 +114,28 @@ fn sequence_gram(v: Value) -> Result<Value, Error> {
     //
     // Heuristic: the editor output always includes ```mermaid fences.
     if raw.contains("```mermaid") {
-        return Ok(Value::from(raw));
+        // The sequence editor stores already-fenced Mermaid (possibly multiple diagrams).
+        // Keep the Mermaid blocks intact, but prepend a single legend explaining the
+        // out-of-band `edgeContext` section and relation ids.
+        let legend = concat!(
+            "[Rx] refer to the 1-based relation line number in the Mermaid diagram(s) below.\n",
+            "edgeContext refer to extra per-relation notes keyed by relation id.\n\n"
+        );
+        // Only add the legend if the stored content actually includes edgeContext or
+        // relation ids. Otherwise keep output identical to the input.
+        let needs_legend = raw.contains("edgeContext:") || raw.contains("[R");
+        let reordered = if raw.contains("edgeContext:") {
+            move_edge_context_after_mermaid(&raw)
+        } else {
+            raw.clone()
+        };
+        if !needs_legend {
+            return Ok(Value::from(reordered));
+        }
+        if reordered.contains("[Rx] refer to") || reordered.starts_with(legend) {
+            return Ok(Value::from(reordered));
+        }
+        return Ok(Value::from(format!("{legend}{reordered}")));
     }
     let mut lines: Vec<&str> = raw.lines().collect();
 
@@ -140,6 +161,71 @@ fn sequence_gram(v: Value) -> Result<Value, Error> {
     }
 
     Ok(Value::from(format!("```mermaid\n{body}```")))
+}
+
+fn move_edge_context_after_mermaid(src: &str) -> String {
+    // Our stored format (from the TUI) is typically:
+    //   ## Name
+    //   edgeContext:
+    //   [R1]: ...
+    //   ```mermaid
+    //   ...
+    //   ```
+    //
+    // For prompt output, we want Mermaid blocks first (UI-friendly), then edgeContext.
+    let mut out: Vec<String> = Vec::new();
+    let mut pending_edge: Vec<String> = Vec::new();
+    let mut in_mermaid = false;
+
+    for line in src.lines() {
+        let t = line.trim();
+
+        if !in_mermaid && t == "edgeContext:" {
+            pending_edge.clear();
+            pending_edge.push("edgeContext:".to_string());
+            continue;
+        }
+        if !in_mermaid && !pending_edge.is_empty() {
+            // Keep collecting until we hit a Mermaid fence or a new section.
+            if t == "```mermaid" || t.starts_with("## ") || t.starts_with("### ") {
+                // Defer emitting; the loop will handle the fence/heading normally.
+            } else {
+                pending_edge.push(line.to_string());
+                continue;
+            }
+        }
+
+        if t == "```mermaid" {
+            in_mermaid = true;
+            out.push(line.to_string());
+            continue;
+        }
+        if in_mermaid {
+            out.push(line.to_string());
+            if t == "```" {
+                in_mermaid = false;
+                if !pending_edge.is_empty() {
+                    out.push(pending_edge.join("\n"));
+                    pending_edge.clear();
+                }
+            }
+            continue;
+        }
+
+        // If we hit a new heading while having pending edgeContext, flush it
+        // before the new section to avoid it "leaking" across diagrams.
+        if (t.starts_with("## ") || t.starts_with("### ")) && !pending_edge.is_empty() {
+            out.push(pending_edge.join("\n"));
+            pending_edge.clear();
+        }
+        out.push(line.to_string());
+    }
+
+    if !pending_edge.is_empty() {
+        out.push(pending_edge.join("\n"));
+    }
+
+    out.join("\n")
 }
 
 fn value_to_string(v: &Value) -> String {
@@ -265,5 +351,15 @@ mod tests {
         let src = "## Diagram\n```mermaid\nsequenceDiagram\n  participant A\n```\n";
         let out = render("{{ s | sequence_gram }}", serde_json::json!({ "s": src }));
         assert_eq!(out, src);
+    }
+
+    #[test]
+    fn sequence_gram_moves_edge_context_after_mermaid_when_pre_fenced() {
+        let src = "## Diagram\nedgeContext:\n[R1]: note\n```mermaid\nsequenceDiagram\n  A->>B: Hi\n```\n";
+        let out = render("{{ s | sequence_gram }}", serde_json::json!({ "s": src }));
+        let mermaid_pos = out.find("```mermaid").unwrap();
+        let edge_pos = out.find("edgeContext:").unwrap();
+        assert!(edge_pos > mermaid_pos, "edgeContext should come after Mermaid");
+        assert!(out.contains("[R1]: note") || out.contains("[R1] -> note"));
     }
 }
