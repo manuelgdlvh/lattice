@@ -153,6 +153,66 @@ pub fn translate(model: &Model, key: KeyEvent) -> Option<Msg> {
         };
     }
 
+    // Gherkin editor captures everything while open.
+    if let Some(ed) = &model.gherkin_editor {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let alt = key.modifiers.contains(KeyModifiers::ALT);
+
+        if matches!(key.code, KeyCode::Esc) {
+            return Some(Msg::GhEdCancel);
+        }
+        if matches!(key.code, KeyCode::F(2)) {
+            return Some(Msg::GhEdSave);
+        }
+        if matches!(key.code, KeyCode::Backspace) {
+            return Some(Msg::GhEdBackspace);
+        }
+        if matches!(key.code, KeyCode::Enter) {
+        // While editing multiline text, Enter inserts newline and Alt/Ctrl+Enter confirms.
+            if matches!(
+                ed.mode,
+                crate::model::GherkinEditorMode::EditBackground { .. }
+                    | crate::model::GherkinEditorMode::EditSteps { .. }
+            ) {
+                if alt || ctrl {
+                    return Some(Msg::GhEdConfirm);
+                }
+                return Some(Msg::GhEdInputChar('\n'));
+            }
+            return Some(Msg::GhEdConfirm);
+        }
+
+        if !matches!(ed.mode, crate::model::GherkinEditorMode::Browse) {
+            return match key.code {
+                KeyCode::Tab => Some(Msg::GhEdInputChar('\t')),
+                KeyCode::Left => Some(Msg::GhEdCaretLeft),
+                KeyCode::Right => Some(Msg::GhEdCaretRight),
+                KeyCode::Up => Some(Msg::GhEdCaretUp),
+                KeyCode::Down => Some(Msg::GhEdCaretDown),
+                KeyCode::Home => Some(Msg::GhEdCaretHome),
+                KeyCode::End => Some(Msg::GhEdCaretEnd),
+                KeyCode::Char(c) => Some(Msg::GhEdInputChar(c)),
+                _ => None,
+            };
+        }
+
+        return match key.code {
+            KeyCode::Tab => Some(Msg::GhEdMoveFeature(1)),
+            KeyCode::Up => Some(Msg::GhEdMoveScenario(-1)),
+            KeyCode::Down => Some(Msg::GhEdMoveScenario(1)),
+            KeyCode::Char('n') => Some(Msg::GhEdStartAddScenario),
+            KeyCode::Char('r') => Some(Msg::GhEdStartRenameScenario),
+            KeyCode::Char('f') => Some(Msg::GhEdStartEditFeature),
+            KeyCode::Char('b') => Some(Msg::GhEdStartEditBackground),
+            KeyCode::Char('e') => Some(Msg::GhEdStartEditSteps),
+            KeyCode::Char('N') => Some(Msg::GhEdStartAddFeature),
+            KeyCode::Char('R') => Some(Msg::GhEdStartRenameFeature),
+            KeyCode::Char('D') => Some(Msg::GhEdDeleteScenario),
+            KeyCode::Char('X') => Some(Msg::GhEdDeleteFeature),
+            _ => None,
+        };
+    }
+
     // Modal picker overlay (templates / projects / agents): arrow
     // keys + Enter / Esc. The picker itself is message-agnostic;
     // accepting runs the per-item `Msg` stored in the picker.
@@ -178,6 +238,9 @@ pub fn translate(model: &Model, key: KeyEvent) -> Option<Msg> {
                 f.kind,
                 Some(lattice_core::fields::FieldKind::CodeBlocks)
             )
+        });
+        let focused_gherkin = form.fields.get(form.cursor).is_some_and(|f| {
+            matches!(f.kind, Some(lattice_core::fields::FieldKind::Gherkin))
         });
         // Submit bindings, in order of robustness across terminals:
         //   * `F2`              — universally reliable
@@ -215,6 +278,7 @@ pub fn translate(model: &Model, key: KeyEvent) -> Option<Msg> {
             KeyCode::BackTab => Some(Msg::FormPrev),
             KeyCode::F(3) if focused_sequence => Some(Msg::OpenSequenceEditor),
             KeyCode::F(4) if focused_codeblocks => Some(Msg::OpenCodeEditor),
+            KeyCode::F(5) if focused_gherkin => Some(Msg::OpenGherkinEditor),
             KeyCode::Up if focused_multiline => Some(Msg::FormCaretUp),
             KeyCode::Down if focused_multiline => Some(Msg::FormCaretDown),
             KeyCode::Up => Some(Msg::FormPrev),

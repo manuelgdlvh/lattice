@@ -138,6 +138,7 @@ entry.
 | `multiselect` | `["a", "b"]` | `options: [..]` required. |
 | `sequence-gram` | `"string"` | Sequence diagram text. The TUI provides an F3 editor; per-edge notes render as Mermaid `Note over ...` lines. |
 | `code-blocks` | `"string"` | One or more named fenced code blocks. The TUI provides an F4 editor with per-block language. |
+| `gherkin` | `"string"` | Gherkin feature + scenarios. The TUI provides an F5 editor (feature, background, tags, steps) and stores standard Gherkin text. |
 
 ### 2.1 Common field properties
 
@@ -159,6 +160,7 @@ validation    table              # kind-dependent; see §3
   `options = [{ id = "a", label = "Alpha" }]`.
 - `sequence-gram`: author diagrams in the built-in editor (F3). Render in prompts with `{{ task.fields.<id> | sequence_gram }}` (or render the stored field directly).
 - `code-blocks`: author named code blocks in the built-in editor (F4). Stored as standard Markdown fenced code blocks (```lang ... ```).
+- `gherkin`: author Gherkin test cases in the built-in editor (F5). Stored as standard Gherkin text (`Feature: ...`, `Scenario: ...`).
 
 ---
 
@@ -266,6 +268,7 @@ template frozen on task.template_snapshot.toml
 - `bullet` — list → Markdown bullets.
 - `indent(n)` — prepend `n` spaces to each line.
 - `code_block(lang="rust")` — wrap in a fenced code block.
+- `gherkin_block` — wrap in a fenced `gherkin` code block.
 - `quote` — prefix `> ` to each line.
 - `truncate(n)` — cap to `n` bytes with a trailing `...`.
 

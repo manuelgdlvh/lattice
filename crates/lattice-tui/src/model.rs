@@ -67,6 +67,43 @@ pub struct Model {
     pub sequence_editor: Option<SequenceEditorState>,
     /// Modal code blocks editor for `code-blocks` fields.
     pub code_editor: Option<CodeEditorState>,
+    /// Modal Gherkin test case editor for `gherkin` fields.
+    pub gherkin_editor: Option<GherkinEditorState>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GherkinEditorState {
+    /// Index into `form.fields` we are editing.
+    pub form_field_index: usize,
+    pub features: Vec<GherkinFeature>,
+    pub feature_cursor: usize,
+    pub scenario_cursor: usize,
+    pub mode: GherkinEditorMode,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GherkinFeature {
+    pub name: String,
+    pub background: String,
+    pub scenarios: Vec<GherkinScenario>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GherkinScenario {
+    pub name: String,
+    pub steps: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum GherkinEditorMode {
+    Browse,
+    AddFeature { input: String },
+    RenameFeature { input: String },
+    EditFeature { input: String }, // rename current feature
+    RenameScenario { input: String },
+    EditBackground { editor: FormField },
+    EditSteps { editor: FormField },
+    AddScenario { input: String },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -387,6 +424,7 @@ impl Model {
             picker: None,
             sequence_editor: None,
             code_editor: None,
+            gherkin_editor: None,
         }
     }
 
@@ -512,6 +550,31 @@ pub enum Msg {
     CodeEdCaretDown,
     CodeEdCaretHome,
     CodeEdCaretEnd,
+
+    // gherkin editor ---------------------------------------------------
+    OpenGherkinEditor,
+    GhEdCancel,
+    GhEdSave,
+    GhEdMoveScenario(isize),
+    GhEdMoveFeature(isize),
+    GhEdInputChar(char),
+    GhEdBackspace,
+    GhEdConfirm,
+    GhEdStartAddScenario,
+    GhEdStartRenameScenario,
+    GhEdStartEditFeature,
+    GhEdStartEditBackground,
+    GhEdStartEditSteps,
+    GhEdDeleteScenario,
+    GhEdStartAddFeature,
+    GhEdStartRenameFeature,
+    GhEdDeleteFeature,
+    GhEdCaretLeft,
+    GhEdCaretRight,
+    GhEdCaretUp,
+    GhEdCaretDown,
+    GhEdCaretHome,
+    GhEdCaretEnd,
 
     // results from async actions --------------------------------------
     ConfirmDeleteTemplate(TemplateId),
@@ -876,6 +939,13 @@ pub fn update(model: &mut Model, msg: Msg) -> Option<Cmd> {
                     ));
                     return None;
                 }
+                if matches!(field.kind, Some(FieldKind::Gherkin)) {
+                    model.toasts.push(Toast::new(
+                        ToastLevel::Info,
+                        "gherkin is read-only here; press F5 to edit",
+                    ));
+                    return None;
+                }
                 field.insert_char(c);
             }
             None
@@ -895,6 +965,13 @@ pub fn update(model: &mut Model, msg: Msg) -> Option<Cmd> {
                     model.toasts.push(Toast::new(
                         ToastLevel::Info,
                         "code-blocks is read-only here; press F4 to edit",
+                    ));
+                    return None;
+                }
+                if matches!(field.kind, Some(FieldKind::Gherkin)) {
+                    model.toasts.push(Toast::new(
+                        ToastLevel::Info,
+                        "gherkin is read-only here; press F5 to edit",
                     ));
                     return None;
                 }
@@ -1596,6 +1673,379 @@ pub fn update(model: &mut Model, msg: Msg) -> Option<Cmd> {
             None
         }
 
+        // gherkin editor ---------------------------------------------------
+        Msg::OpenGherkinEditor => {
+            let Some(form) = &model.form else {
+                return None;
+            };
+            let Some(field) = form.fields.get(form.cursor) else {
+                return None;
+            };
+            if !matches!(field.kind, Some(FieldKind::Gherkin)) {
+                return None;
+            }
+            let features = parse_gherkin_features(&field.value);
+            model.gherkin_editor = Some(GherkinEditorState {
+                form_field_index: form.cursor,
+                features,
+                feature_cursor: 0,
+                scenario_cursor: 0,
+                mode: GherkinEditorMode::Browse,
+            });
+            None
+        }
+        Msg::GhEdCancel => {
+            model.gherkin_editor = None;
+            None
+        }
+        Msg::GhEdSave => {
+            let Some(ed) = model.gherkin_editor.take() else {
+                return None;
+            };
+            if let Some(form) = &mut model.form
+                && let Some(f) = form.fields.get_mut(ed.form_field_index)
+            {
+                f.value = render_gherkin_features(&ed.features);
+                f.set_caret(f.value.len());
+            }
+            None
+        }
+        Msg::GhEdMoveFeature(d) => {
+            if let Some(ed) = &mut model.gherkin_editor
+                && matches!(ed.mode, GherkinEditorMode::Browse)
+                && !ed.features.is_empty()
+            {
+                let n = i128::try_from(ed.features.len()).unwrap_or(1).max(1);
+                let cur = i128::try_from(ed.feature_cursor).unwrap_or(0);
+                let delta = i128::try_from(d).unwrap_or(0);
+                let wrapped = ((cur + delta) % n + n) % n;
+                ed.feature_cursor = usize::try_from(wrapped).unwrap_or(0);
+                ed.scenario_cursor = 0;
+            }
+            None
+        }
+        Msg::GhEdMoveScenario(d) => {
+            if let Some(ed) = &mut model.gherkin_editor
+                && matches!(ed.mode, GherkinEditorMode::Browse)
+            {
+                let Some(feat) = ed.features.get(ed.feature_cursor) else {
+                    return None;
+                };
+                if feat.scenarios.is_empty() {
+                    return None;
+                }
+                let n = i128::try_from(feat.scenarios.len()).unwrap_or(1).max(1);
+                let cur = i128::try_from(ed.scenario_cursor).unwrap_or(0);
+                let delta = i128::try_from(d).unwrap_or(0);
+                let wrapped = ((cur + delta) % n + n) % n;
+                ed.scenario_cursor = usize::try_from(wrapped).unwrap_or(0);
+            }
+            None
+        }
+        Msg::GhEdStartAddFeature => {
+            if let Some(ed) = &mut model.gherkin_editor {
+                ed.mode = GherkinEditorMode::AddFeature {
+                    input: String::new(),
+                };
+            }
+            None
+        }
+        Msg::GhEdStartRenameFeature => {
+            if let Some(ed) = &mut model.gherkin_editor {
+                let current = ed
+                    .features
+                    .get(ed.feature_cursor)
+                    .map(|f| f.name.clone())
+                    .unwrap_or_default();
+                ed.mode = GherkinEditorMode::RenameFeature { input: current };
+            }
+            None
+        }
+        Msg::GhEdStartAddScenario => {
+            if let Some(ed) = &mut model.gherkin_editor {
+                ed.mode = GherkinEditorMode::AddScenario {
+                    input: String::new(),
+                };
+            }
+            None
+        }
+        Msg::GhEdStartRenameScenario => {
+            if let Some(ed) = &mut model.gherkin_editor {
+                let current = ed
+                    .features
+                    .get(ed.feature_cursor)
+                    .and_then(|f| f.scenarios.get(ed.scenario_cursor))
+                    .map(|s| s.name.clone())
+                    .unwrap_or_default();
+                ed.mode = GherkinEditorMode::RenameScenario { input: current };
+            }
+            None
+        }
+        Msg::GhEdStartEditFeature => {
+            if let Some(ed) = &mut model.gherkin_editor {
+                let current = ed
+                    .features
+                    .get(ed.feature_cursor)
+                    .map(|f| f.name.clone())
+                    .unwrap_or_default();
+                ed.mode = GherkinEditorMode::EditFeature { input: current };
+            }
+            None
+        }
+        Msg::GhEdStartEditBackground => {
+            if let Some(ed) = &mut model.gherkin_editor {
+                let current = ed
+                    .features
+                    .get(ed.feature_cursor)
+                    .map(|f| f.background.clone())
+                    .unwrap_or_default();
+                ed.mode = GherkinEditorMode::EditBackground {
+                    editor: FormField::plain("Background", current, false, true),
+                };
+            }
+            None
+        }
+        Msg::GhEdStartEditSteps => {
+            if let Some(ed) = &mut model.gherkin_editor {
+                let current = ed
+                    .features
+                    .get(ed.feature_cursor)
+                    .and_then(|f| f.scenarios.get(ed.scenario_cursor))
+                    .map(|s| s.steps.clone())
+                    .unwrap_or_default();
+                ed.mode = GherkinEditorMode::EditSteps {
+                    editor: FormField::plain("Steps", current, false, true),
+                };
+            }
+            None
+        }
+        Msg::GhEdInputChar(c) => {
+            if let Some(ed) = &mut model.gherkin_editor {
+                match &mut ed.mode {
+                    GherkinEditorMode::AddFeature { input }
+                    | GherkinEditorMode::RenameFeature { input }
+                    | GherkinEditorMode::EditFeature { input }
+                    | GherkinEditorMode::RenameScenario { input }
+                    | GherkinEditorMode::AddScenario { input } => input.push(c),
+                    GherkinEditorMode::EditBackground { editor }
+                    | GherkinEditorMode::EditSteps { editor } => editor.insert_char(c),
+                    GherkinEditorMode::Browse => {}
+                }
+            }
+            None
+        }
+        Msg::GhEdBackspace => {
+            if let Some(ed) = &mut model.gherkin_editor {
+                match &mut ed.mode {
+                    GherkinEditorMode::AddFeature { input }
+                    | GherkinEditorMode::RenameFeature { input }
+                    | GherkinEditorMode::EditFeature { input }
+                    | GherkinEditorMode::RenameScenario { input }
+                    | GherkinEditorMode::AddScenario { input } => {
+                        input.pop();
+                    }
+                    GherkinEditorMode::EditBackground { editor }
+                    | GherkinEditorMode::EditSteps { editor } => editor.backspace(),
+                    GherkinEditorMode::Browse => {}
+                }
+            }
+            None
+        }
+        Msg::GhEdCaretLeft => {
+            if let Some(ed) = &mut model.gherkin_editor {
+                match &mut ed.mode {
+                    GherkinEditorMode::EditBackground { editor }
+                    | GherkinEditorMode::EditSteps { editor } => editor.caret_left(),
+                    _ => {}
+                }
+            }
+            None
+        }
+        Msg::GhEdCaretRight => {
+            if let Some(ed) = &mut model.gherkin_editor {
+                match &mut ed.mode {
+                    GherkinEditorMode::EditBackground { editor }
+                    | GherkinEditorMode::EditSteps { editor } => editor.caret_right(),
+                    _ => {}
+                }
+            }
+            None
+        }
+        Msg::GhEdCaretUp => {
+            if let Some(ed) = &mut model.gherkin_editor {
+                match &mut ed.mode {
+                    GherkinEditorMode::EditBackground { editor }
+                    | GherkinEditorMode::EditSteps { editor } => editor.caret_up(),
+                    _ => {}
+                }
+            }
+            None
+        }
+        Msg::GhEdCaretDown => {
+            if let Some(ed) = &mut model.gherkin_editor {
+                match &mut ed.mode {
+                    GherkinEditorMode::EditBackground { editor }
+                    | GherkinEditorMode::EditSteps { editor } => editor.caret_down(),
+                    _ => {}
+                }
+            }
+            None
+        }
+        Msg::GhEdCaretHome => {
+            if let Some(ed) = &mut model.gherkin_editor {
+                match &mut ed.mode {
+                    GherkinEditorMode::EditBackground { editor }
+                    | GherkinEditorMode::EditSteps { editor } => editor.caret_home(),
+                    _ => {}
+                }
+            }
+            None
+        }
+        Msg::GhEdCaretEnd => {
+            if let Some(ed) = &mut model.gherkin_editor {
+                match &mut ed.mode {
+                    GherkinEditorMode::EditBackground { editor }
+                    | GherkinEditorMode::EditSteps { editor } => editor.caret_end(),
+                    _ => {}
+                }
+            }
+            None
+        }
+        Msg::GhEdConfirm => {
+            if let Some(ed) = &mut model.gherkin_editor {
+                // Special case: validate steps before accepting.
+                if let GherkinEditorMode::EditSteps { editor } = &mut ed.mode {
+                    match validate_gherkin_steps(&editor.value) {
+                        Ok(()) => {
+                            if let Some(feat) = ed.features.get_mut(ed.feature_cursor)
+                                && let Some(sc) = feat.scenarios.get_mut(ed.scenario_cursor)
+                            {
+                                sc.steps = editor.value.trim_end().to_string();
+                            }
+                            ed.mode = GherkinEditorMode::Browse;
+                        }
+                        Err(msg) => {
+                            model.toasts.push(Toast::new(ToastLevel::Warn, msg));
+                        }
+                    }
+                    return None;
+                }
+
+                match std::mem::replace(&mut ed.mode, GherkinEditorMode::Browse) {
+                    GherkinEditorMode::AddFeature { input } => {
+                        let name = input.trim();
+                        let name = if name.is_empty() {
+                            format!("Feature {}", ed.features.len() + 1)
+                        } else {
+                            name.to_string()
+                        };
+                        ed.features.push(GherkinFeature {
+                            name,
+                            background: String::new(),
+                            scenarios: vec![GherkinScenario {
+                                name: "Scenario 1".into(),
+                                steps: String::new(),
+                            }],
+                        });
+                        ed.feature_cursor = ed.features.len().saturating_sub(1);
+                        ed.scenario_cursor = 0;
+                    }
+                    GherkinEditorMode::RenameFeature { input }
+                    | GherkinEditorMode::EditFeature { input } => {
+                        let name = input.trim();
+                        if let Some(f) = ed.features.get_mut(ed.feature_cursor)
+                            && !name.is_empty()
+                        {
+                            f.name = name.to_string();
+                        }
+                    }
+                    GherkinEditorMode::AddScenario { input } => {
+                        let name = input.trim();
+                        let name = if name.is_empty() {
+                            let n = ed
+                                .features
+                                .get(ed.feature_cursor)
+                                .map(|f| f.scenarios.len())
+                                .unwrap_or(0);
+                            format!("Scenario {}", n + 1)
+                        } else {
+                            name.to_string()
+                        };
+                        if let Some(f) = ed.features.get_mut(ed.feature_cursor) {
+                            f.scenarios.push(GherkinScenario {
+                                name,
+                                steps: String::new(),
+                            });
+                            ed.scenario_cursor = f.scenarios.len().saturating_sub(1);
+                        }
+                    }
+                    GherkinEditorMode::RenameScenario { input } => {
+                        let name = input.trim();
+                        if let Some(f) = ed.features.get_mut(ed.feature_cursor)
+                            && let Some(s) = f.scenarios.get_mut(ed.scenario_cursor)
+                            && !name.is_empty()
+                        {
+                            s.name = name.to_string();
+                        }
+                    }
+                    GherkinEditorMode::EditBackground { editor } => {
+                        if let Some(f) = ed.features.get_mut(ed.feature_cursor) {
+                            f.background = editor.value.trim_end().to_string();
+                        }
+                    }
+                    GherkinEditorMode::EditSteps { .. } => {
+                        // Handled above (validated + saved) before we reach this match.
+                    }
+                    GherkinEditorMode::Browse => {}
+                }
+            }
+            None
+        }
+        Msg::GhEdDeleteFeature => {
+            if let Some(ed) = &mut model.gherkin_editor
+                && matches!(ed.mode, GherkinEditorMode::Browse)
+                && !ed.features.is_empty()
+            {
+                let idx = ed.feature_cursor.min(ed.features.len().saturating_sub(1));
+                ed.features.remove(idx);
+                if ed.features.is_empty() {
+                    ed.features.push(GherkinFeature {
+                        name: "Test cases".into(),
+                        background: String::new(),
+                        scenarios: vec![GherkinScenario {
+                            name: "Scenario 1".into(),
+                            steps: String::new(),
+                        }],
+                    });
+                }
+                ed.feature_cursor = ed.feature_cursor.min(ed.features.len().saturating_sub(1));
+                ed.scenario_cursor = 0;
+            }
+            None
+        }
+        Msg::GhEdDeleteScenario => {
+            if let Some(ed) = &mut model.gherkin_editor
+                && matches!(ed.mode, GherkinEditorMode::Browse)
+            {
+                let Some(f) = ed.features.get_mut(ed.feature_cursor) else {
+                    return None;
+                };
+                if f.scenarios.is_empty() {
+                    return None;
+                }
+                let idx = ed.scenario_cursor.min(f.scenarios.len().saturating_sub(1));
+                f.scenarios.remove(idx);
+                if f.scenarios.is_empty() {
+                    f.scenarios.push(GherkinScenario {
+                        name: "Scenario 1".into(),
+                        steps: String::new(),
+                    });
+                }
+                ed.scenario_cursor = ed.scenario_cursor.min(f.scenarios.len().saturating_sub(1));
+            }
+            None
+        }
+
         Msg::ConfirmDeleteTemplate(id) => Some(Cmd::DeleteTemplate(id)),
         Msg::ConfirmDeleteTask(t) => Some(Cmd::DeleteTask(t)),
     }
@@ -1715,6 +2165,250 @@ fn render_code_blocks(blocks: &[CodeBlock]) -> String {
         out.push_str("```\n");
     }
     out
+}
+
+fn parse_gherkin_features(src: &str) -> Vec<GherkinFeature> {
+    let trimmed = src.trim();
+    if trimmed.is_empty() {
+        return vec![GherkinFeature {
+            name: "Test cases".into(),
+            background: String::new(),
+            scenarios: vec![GherkinScenario {
+                name: "Scenario 1".into(),
+                steps: String::new(),
+            }],
+        }];
+    }
+
+    let mut features: Vec<GherkinFeature> = Vec::new();
+    let mut current: Option<GherkinFeature> = None;
+
+    let mut i = 0usize;
+    let lines: Vec<&str> = src.lines().collect();
+    while i < lines.len() {
+        let line = lines[i].trim_end();
+        let t = line.trim();
+
+        if let Some(rest) = t.strip_prefix("Feature:") {
+            if let Some(f) = current.take() {
+                features.push(f);
+            }
+            current = Some(GherkinFeature {
+                name: rest.trim().to_string(),
+                background: String::new(),
+                scenarios: Vec::new(),
+            });
+            i += 1;
+            continue;
+        }
+
+        if current.is_none() {
+            i += 1;
+            continue;
+        }
+
+        if t.starts_with("Background:") {
+            i += 1;
+            let mut bg: Vec<String> = Vec::new();
+            while i < lines.len() {
+                let tt = lines[i].trim();
+                if tt.starts_with("Scenario:") || tt.starts_with("Scenario Outline:") || tt.starts_with("Feature:") {
+                    break;
+                }
+                if !tt.is_empty() {
+                    bg.push(tt.to_string());
+                }
+                i += 1;
+            }
+            if let Some(f) = current.as_mut() {
+                f.background = bg.join("\n");
+            }
+            continue;
+        }
+
+        if t.starts_with("Scenario:") || t.starts_with("Scenario Outline:") {
+            let head = t;
+            let name = head
+                .strip_prefix("Scenario:")
+                .or_else(|| head.strip_prefix("Scenario Outline:"))
+                .map(|s| s.trim())
+                .unwrap_or("")
+                .to_string();
+            i += 1;
+            let mut step_lines: Vec<String> = Vec::new();
+            while i < lines.len() {
+                let tt = lines[i].trim();
+                if tt.starts_with("Scenario:") || tt.starts_with("Scenario Outline:") || tt.starts_with("Feature:") {
+                    break;
+                }
+                if tt.starts_with('@') {
+                    // Tags not supported in this field type; ignore.
+                    i += 1;
+                    continue;
+                }
+                if !tt.is_empty() {
+                    step_lines.push(tt.to_string());
+                }
+                i += 1;
+            }
+            if let Some(f) = current.as_mut() {
+                let idx = f.scenarios.len() + 1;
+                f.scenarios.push(GherkinScenario {
+                    name: if name.is_empty() { format!("Scenario {idx}") } else { name },
+                    steps: step_lines.join("\n"),
+                });
+            }
+            continue;
+        }
+
+        i += 1;
+    }
+
+    if let Some(f) = current.take() {
+        features.push(f);
+    }
+
+    if features.is_empty() {
+        features.push(GherkinFeature {
+            name: "Test cases".into(),
+            background: String::new(),
+            scenarios: vec![GherkinScenario {
+                name: "Scenario 1".into(),
+                steps: String::new(),
+            }],
+        });
+    }
+
+    for f in &mut features {
+        if f.name.trim().is_empty() {
+            f.name = "Test cases".into();
+        }
+        if f.scenarios.is_empty() {
+            f.scenarios.push(GherkinScenario {
+                name: "Scenario 1".into(),
+                steps: String::new(),
+            });
+        }
+    }
+
+    features
+}
+
+pub(crate) fn render_gherkin_features(features: &[GherkinFeature]) -> String {
+    fn push_indented(out: &mut String, indent: &str, text: &str) {
+        for l in text.lines() {
+            let t = l.trim_end();
+            if t.is_empty() {
+                continue;
+            }
+            out.push_str(indent);
+            out.push_str(t);
+            out.push('\n');
+        }
+    }
+
+    let mut out = String::new();
+    for (fi, f) in features.iter().enumerate() {
+        if fi > 0 {
+            out.push('\n');
+            out.push('\n');
+        }
+        let name = f.name.trim();
+        out.push_str("Feature: ");
+        out.push_str(if name.is_empty() { "Test cases" } else { name });
+        out.push('\n');
+        out.push('\n');
+
+        let bg = f.background.trim_end();
+        if !bg.trim().is_empty() {
+            out.push_str("  Background:\n");
+            push_indented(&mut out, "    ", bg);
+            out.push('\n');
+        }
+
+        for (si, sc) in f.scenarios.iter().enumerate() {
+            if si > 0 {
+                out.push('\n');
+            }
+            out.push_str("  Scenario: ");
+            let name = sc.name.trim();
+            out.push_str(if name.is_empty() { "Scenario" } else { name });
+            out.push('\n');
+            push_indented(&mut out, "    ", sc.steps.trim_end());
+        }
+    }
+
+    out.trim_end().to_string()
+}
+
+fn validate_gherkin_steps(src: &str) -> Result<(), String> {
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum Seen {
+        None,
+        Given,
+        When,
+        Then,
+    }
+
+    let mut seen = Seen::None;
+    let mut has_given = false;
+    let mut has_when = false;
+    let mut has_then = false;
+
+    for (idx, raw) in src.lines().enumerate() {
+        let line_no = idx + 1;
+        let t = raw.trim();
+        if t.is_empty() {
+            continue;
+        }
+
+        let (kw, _rest) = t
+            .split_once(' ')
+            .map(|(a, b)| (a, b))
+            .unwrap_or((t, ""));
+
+        match kw {
+            "Given" => {
+                has_given = true;
+                seen = Seen::Given;
+            }
+            "When" => {
+                if !has_given {
+                    return Err(format!("steps line {line_no}: `When` cannot appear before `Given`"));
+                }
+                has_when = true;
+                seen = Seen::When;
+            }
+            "Then" => {
+                if !has_when {
+                    return Err(format!("steps line {line_no}: `Then` cannot appear before `When`"));
+                }
+                has_then = true;
+                seen = Seen::Then;
+            }
+            "And" | "But" => {
+                if seen == Seen::None {
+                    return Err(format!(
+                        "steps line {line_no}: `And/But` must follow Given/When/Then"
+                    ));
+                }
+            }
+            other => {
+                return Err(format!(
+                    "steps line {line_no}: must start with Given/When/Then/And/But (got `{other}`)"
+                ));
+            }
+        }
+    }
+
+    if src.trim().is_empty() {
+        return Ok(());
+    }
+    if !(has_given && has_when && has_then) {
+        return Err("steps must include at least one Given, one When, and one Then".into());
+    }
+
+    Ok(())
 }
 
 fn parse_sequence_gram(src: &str) -> Vec<SequenceDiagram> {
@@ -2323,7 +3017,7 @@ fn form_field_for_template_field(field: &lattice_core::fields::Field) -> FormFie
     let label = format_field_label(field);
     let multiline = matches!(
         field.kind,
-        FieldKind::Textarea | FieldKind::SequenceGram | FieldKind::CodeBlocks
+        FieldKind::Textarea | FieldKind::SequenceGram | FieldKind::CodeBlocks | FieldKind::Gherkin
     );
     let value = match &field.default {
         Some(serde_json::Value::String(s)) => s.clone(),
@@ -2356,6 +3050,7 @@ fn format_field_label(field: &lattice_core::fields::Field) -> String {
         FieldKind::Multiselect => "multiselect",
         FieldKind::SequenceGram => "sequence-gram",
         FieldKind::CodeBlocks => "code-blocks",
+        FieldKind::Gherkin => "gherkin",
     };
     format!("{} [{}]", field.label, kind_label)
 }

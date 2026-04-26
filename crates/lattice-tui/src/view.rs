@@ -45,8 +45,217 @@ pub fn render(frame: &mut Frame<'_>, model: &Model) {
     if let Some(ed) = &model.code_editor {
         render_code_editor(frame, area, ed);
     }
+    if let Some(ed) = &model.gherkin_editor {
+        render_gherkin_editor(frame, area, ed);
+    }
     if let Some(confirm) = &model.confirm {
         render_confirm(frame, area, confirm);
+    }
+}
+
+fn render_gherkin_editor(frame: &mut Frame<'_>, area: Rect, ed: &crate::model::GherkinEditorState) {
+    let width = ((area.width as u32) * 80 / 100)
+        .try_into()
+        .unwrap_or(area.width)
+        .clamp(70, 200);
+    let height = area.height.saturating_sub(4).clamp(16, 34);
+    let left = (area.width.saturating_sub(width)) / 2 + area.x;
+    let top = (area.height.saturating_sub(height)) / 2 + area.y;
+    let rect = Rect {
+        x: left,
+        y: top,
+        width,
+        height,
+    };
+    frame.render_widget(Clear, rect);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(Span::styled(
+            " gherkin editor ",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ))
+        .title_bottom(Line::from(vec![
+            Span::styled("F2", Style::default().fg(Color::Green)),
+            Span::raw(" save  "),
+            Span::styled("Esc", Style::default().fg(Color::Yellow)),
+            Span::raw(" cancel  "),
+            Span::styled("Tab", Style::default().fg(Color::Cyan)),
+            Span::raw(" next feature  "),
+            Span::styled("f", Style::default().fg(Color::Cyan)),
+            Span::raw(" rename feature  "),
+            Span::styled("b", Style::default().fg(Color::Cyan)),
+            Span::raw(" background  "),
+            Span::styled("n", Style::default().fg(Color::Cyan)),
+            Span::raw(" new scenario  "),
+            Span::styled("r", Style::default().fg(Color::Cyan)),
+            Span::raw(" rename scenario  "),
+            Span::styled("N", Style::default().fg(Color::Cyan)),
+            Span::raw(" new feature  "),
+            Span::styled("R", Style::default().fg(Color::Cyan)),
+            Span::raw(" rename feature  "),
+            Span::styled("e", Style::default().fg(Color::Cyan)),
+            Span::raw(" edit steps  "),
+            Span::styled("D", Style::default().fg(Color::Cyan)),
+            Span::raw(" del scenario  "),
+            Span::styled("X", Style::default().fg(Color::Cyan)),
+            Span::raw(" del feature"),
+        ]));
+
+    let inner = block.inner(rect);
+    frame.render_widget(block, rect);
+
+    let footer_h = match ed.mode {
+        crate::model::GherkinEditorMode::EditBackground { .. }
+        | crate::model::GherkinEditorMode::EditSteps { .. } => 6,
+        _ => 3,
+    };
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(0),
+            Constraint::Length(footer_h),
+        ])
+        .split(inner);
+
+    let feature_name = ed
+        .features
+        .get(ed.feature_cursor)
+        .map(|f| f.name.clone())
+        .unwrap_or_else(|| "Test cases".into());
+    let scenario_count = ed
+        .features
+        .get(ed.feature_cursor)
+        .map(|f| f.scenarios.len())
+        .unwrap_or(0);
+    let title_line = Line::from(vec![
+        Span::styled("Feature: ", Style::default().add_modifier(Modifier::BOLD)),
+        Span::styled(feature_name, Style::default().fg(Color::Cyan)),
+        Span::styled(
+            format!(
+                "  ({}/{})  Scenario ({}/{})",
+                ed.feature_cursor + 1,
+                ed.features.len().max(1),
+                ed.scenario_cursor + 1,
+                scenario_count.max(1)
+            ),
+            Style::default().fg(Color::DarkGray),
+        ),
+    ]);
+    frame.render_widget(Paragraph::new(vec![title_line]).wrap(Wrap { trim: false }), chunks[0]);
+
+    let mid = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(72), Constraint::Percentage(28)])
+        .split(chunks[1]);
+
+    let preview = crate::model::render_gherkin_features(&ed.features);
+    let preview_lines: Vec<Line<'static>> = preview.lines().map(|l| Line::from(l.to_string())).collect();
+    frame.render_widget(
+        Paragraph::new(preview_lines)
+            .wrap(Wrap { trim: false })
+            .block(Block::default().borders(Borders::ALL).title(" Preview ")),
+        mid[0],
+    );
+
+    let items: Vec<ListItem<'_>> = ed
+        .features
+        .get(ed.feature_cursor)
+        .map(|f| {
+            f.scenarios
+                .iter()
+                .enumerate()
+                .map(|(i, s)| {
+                    let marker = if i == ed.scenario_cursor { "▶ " } else { "  " };
+                    ListItem::new(Line::from(vec![
+                        Span::styled(marker, Style::default().fg(Color::Cyan)),
+                        Span::styled(s.name.clone(), Style::default()),
+                    ]))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    frame.render_widget(
+        List::new(items).block(Block::default().borders(Borders::ALL).title(" Scenarios ")),
+        mid[1],
+    );
+
+    match &ed.mode {
+        crate::model::GherkinEditorMode::EditBackground { editor }
+        | crate::model::GherkinEditorMode::EditSteps { editor } => {
+            let title = match &ed.mode {
+                crate::model::GherkinEditorMode::EditBackground { .. } => {
+                    " Edit background (Enter=newline · Alt/Ctrl+Enter=done · Esc=cancel) "
+                }
+                _ => " Edit steps (Enter=newline · Alt/Ctrl+Enter=done · Esc=cancel) ",
+            };
+            let chunk = chunks[2];
+            let caret = editor.caret.min(editor.value.len());
+            let body = insert_caret(&editor.value, caret);
+            let inner_w = chunk.width.saturating_sub(2);
+            let inner_h = chunk.height.saturating_sub(2).max(1);
+            let scroll_y = {
+                let caret_row =
+                    wrapped_row_count(&editor.value[..caret], inner_w).saturating_sub(1);
+                caret_row.saturating_sub(inner_h.saturating_sub(1))
+            };
+            frame.render_widget(
+                Paragraph::new(body)
+                    .wrap(Wrap { trim: false })
+                    .scroll((scroll_y, 0))
+                    .block(Block::default().borders(Borders::ALL).title(title)),
+                chunk,
+            );
+        }
+        _ => {
+            let footer_lines: Vec<Line<'static>> = match &ed.mode {
+                crate::model::GherkinEditorMode::Browse => vec![Line::from(Span::styled(
+                    "Tip: Tab cycles features; Up/Down picks scenarios; e edits steps.",
+                    Style::default().fg(Color::DarkGray),
+                ))],
+                crate::model::GherkinEditorMode::AddScenario { input } => vec![Line::from(vec![
+                    Span::styled("New scenario: ", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::raw(input.clone()),
+                    Span::styled("▌", Style::default().fg(Color::Cyan)),
+                    Span::styled("  Enter=create", Style::default().fg(Color::DarkGray)),
+                ])],
+                crate::model::GherkinEditorMode::RenameScenario { input } => vec![Line::from(vec![
+                    Span::styled("Rename: ", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::raw(input.clone()),
+                    Span::styled("▌", Style::default().fg(Color::Cyan)),
+                    Span::styled("  Enter=save", Style::default().fg(Color::DarkGray)),
+                ])],
+                crate::model::GherkinEditorMode::EditFeature { input } => vec![Line::from(vec![
+                    Span::styled("Feature: ", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::raw(input.clone()),
+                    Span::styled("▌", Style::default().fg(Color::Cyan)),
+                    Span::styled("  Enter=save", Style::default().fg(Color::DarkGray)),
+                ])],
+                crate::model::GherkinEditorMode::AddFeature { input } => vec![Line::from(vec![
+                    Span::styled("New feature: ", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::raw(input.clone()),
+                    Span::styled("▌", Style::default().fg(Color::Cyan)),
+                    Span::styled("  Enter=create", Style::default().fg(Color::DarkGray)),
+                ])],
+                crate::model::GherkinEditorMode::RenameFeature { input } => vec![Line::from(vec![
+                    Span::styled("Rename feature: ", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::raw(input.clone()),
+                    Span::styled("▌", Style::default().fg(Color::Cyan)),
+                    Span::styled("  Enter=save", Style::default().fg(Color::DarkGray)),
+                ])],
+                crate::model::GherkinEditorMode::EditBackground { .. }
+                | crate::model::GherkinEditorMode::EditSteps { .. } => vec![Line::from("")],
+            };
+            frame.render_widget(
+                Paragraph::new(footer_lines)
+                    .wrap(Wrap { trim: false })
+                    .block(Block::default().borders(Borders::ALL)),
+                chunks[2],
+            );
+        }
     }
 }
 
@@ -892,10 +1101,13 @@ fn render_form(frame: &mut Frame<'_>, area: Rect, form: &crate::model::FormState
         };
         let is_seq = matches!(field.kind, Some(lattice_core::fields::FieldKind::SequenceGram));
         let is_code = matches!(field.kind, Some(lattice_core::fields::FieldKind::CodeBlocks));
+        let is_gherkin = matches!(field.kind, Some(lattice_core::fields::FieldKind::Gherkin));
         let editor_badge = if is_seq {
             "  [F3 open editor]"
         } else if is_code {
             "  [F4 open editor]"
+        } else if is_gherkin {
+            "  [F5 open editor]"
         } else {
             ""
         };
@@ -915,6 +1127,12 @@ fn render_form(frame: &mut Frame<'_>, area: Rect, form: &crate::model::FormState
         } else if is_code {
             if field.value.trim().is_empty() {
                 "<code blocks — press F4 to edit>".to_string()
+            } else {
+                field.value.clone()
+            }
+        } else if is_gherkin {
+            if field.value.trim().is_empty() {
+                "<gherkin test cases — press F5 to edit>".to_string()
             } else {
                 field.value.clone()
             }

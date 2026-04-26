@@ -11,6 +11,7 @@
 //! - `multiselect` — subset of `options`
 //! - `sequence-gram` — string (edited with the sequence diagram UI)
 //! - `code-blocks` — string (edited with the code blocks UI)
+//! - `gherkin` — string (edited with the Gherkin test cases UI)
 
 mod validation;
 
@@ -78,6 +79,8 @@ pub enum FieldKind {
     SequenceGram,
     #[serde(rename = "code-blocks")]
     CodeBlocks,
+    #[serde(rename = "gherkin")]
+    Gherkin,
 }
 
 impl FieldKind {

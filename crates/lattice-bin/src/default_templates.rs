@@ -50,6 +50,18 @@ pub(crate) fn default_templates(now: Timestamp) -> Vec<Template> {
             validation: Validation::default(),
             options: FieldOptions { options: vec![] },
         },
+        Field {
+            id: "test_cases".into(),
+            kind: FieldKind::Gherkin,
+            label: "Test cases (Gherkin)".into(),
+            help: Some("Add Gherkin scenarios (F5 opens the editor).".into()),
+            placeholder: None,
+            required: false,
+            default: None,
+            show_if: None,
+            validation: Validation::default(),
+            options: FieldOptions { options: vec![] },
+        },
     ];
     t.prompt = PromptSpec {
         template: r#"# Role
@@ -69,6 +81,11 @@ You are an autonomous senior engineer working on this repository.
 {% if task.fields.code_blocks is defined and task.fields.code_blocks %}
 # Code blocks
 {{ task.fields.code_blocks }}
+{% endif %}
+
+{% if task.fields.test_cases is defined and task.fields.test_cases %}
+# Test cases (Gherkin)
+{{ task.fields.test_cases | gherkin_block }}
 {% endif %}
 
 # Working mode (autonomous)

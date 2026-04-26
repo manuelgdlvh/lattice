@@ -20,6 +20,7 @@ pub fn register_filters(env: &mut Environment<'_>) {
     env.add_filter("bullet", bullet);
     env.add_filter("indent", indent);
     env.add_filter("code_block", code_block);
+    env.add_filter("gherkin_block", gherkin_block);
     env.add_filter("quote", quote);
     env.add_filter("truncate", truncate);
     env.add_filter("sequence_gram", sequence_gram);
@@ -69,6 +70,14 @@ fn code_block(v: Value, kwargs: Kwargs) -> Result<Value, Error> {
     kwargs.assert_all_used()?;
     let body = value_to_string(&v);
     Ok(Value::from(format!("```{lang}\n{body}\n```")))
+}
+
+/// Wrap Gherkin text in a fenced `gherkin` code block.
+///
+/// Usage: `{{ value | gherkin_block }}`.
+fn gherkin_block(v: Value) -> Result<Value, Error> {
+    let body = value_to_string(&v);
+    Ok(Value::from(format!("```gherkin\n{body}\n```")))
 }
 
 /// Prefix each line with `> ` (Markdown quote).
@@ -290,6 +299,17 @@ mod tests {
     fn code_block_default_lang_is_empty() {
         let out = render(r"{{ s | code_block }}", serde_json::json!({ "s": "plain" }));
         assert_eq!(out, "```\nplain\n```");
+    }
+
+    #[test]
+    fn gherkin_block_wraps_as_gherkin_fence() {
+        let out = render(
+            r"{{ s | gherkin_block }}",
+            serde_json::json!({ "s": "Feature: X\n  Scenario: Y\n    Given z" }),
+        );
+        assert!(out.starts_with("```gherkin\n"));
+        assert!(out.contains("Feature: X"));
+        assert!(out.ends_with("\n```") || out.ends_with("```"));
     }
 
     #[test]
