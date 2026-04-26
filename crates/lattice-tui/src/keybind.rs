@@ -168,7 +168,7 @@ pub fn translate(model: &Model, key: KeyEvent) -> Option<Msg> {
             return Some(Msg::GhEdBackspace);
         }
         if matches!(key.code, KeyCode::Enter) {
-        // While editing multiline text, Enter inserts newline and Alt/Ctrl+Enter confirms.
+            // While editing multiline text, Enter inserts newline and Alt/Ctrl+Enter confirms.
             if matches!(
                 ed.mode,
                 crate::model::GherkinEditorMode::EditBackground { .. }
@@ -213,6 +213,83 @@ pub fn translate(model: &Model, key: KeyEvent) -> Option<Msg> {
         };
     }
 
+    // OpenAPI editor captures everything while open.
+    if let Some(ed) = &model.openapi_editor {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+
+        if matches!(key.code, KeyCode::Esc) {
+            return Some(Msg::OaEdCancel);
+        }
+        if matches!(key.code, KeyCode::F(2)) {
+            return Some(Msg::OaEdSave);
+        }
+        if matches!(key.code, KeyCode::Backspace) {
+            return Some(Msg::OaEdBackspace);
+        }
+        if matches!(key.code, KeyCode::Enter) {
+            return Some(Msg::OaEdConfirm);
+        }
+
+        if !matches!(ed.mode, crate::model::OpenApiEditorMode::Browse) {
+            return match key.code {
+                KeyCode::Tab => Some(Msg::OaEdInputChar('\t')),
+                KeyCode::Char(c) => Some(Msg::OaEdInputChar(c)),
+                _ => None,
+            };
+        }
+
+        if matches!(ed.mode, crate::model::OpenApiEditorMode::Schemas) {
+            return match key.code {
+                KeyCode::PageUp => Some(Msg::OaEdScrollPreview(-6)),
+                KeyCode::PageDown => Some(Msg::OaEdScrollPreview(6)),
+                KeyCode::Up if ctrl => Some(Msg::OaEdScrollPreview(-1)),
+                KeyCode::Down if ctrl => Some(Msg::OaEdScrollPreview(1)),
+                KeyCode::Char('g') => Some(Msg::OaEdTogglePane),
+                KeyCode::Tab => Some(Msg::OaEdMoveSchema(1)),
+                KeyCode::Up => Some(Msg::OaEdMoveProp(-1)),
+                KeyCode::Down => Some(Msg::OaEdMoveProp(1)),
+                KeyCode::Char('n') => Some(Msg::OaEdStartAddSchema),
+                KeyCode::Char('D') => Some(Msg::OaEdDeleteSchema),
+                KeyCode::Char('h') => Some(Msg::OaEdStartRenameSchema),
+                KeyCode::Char('p') => Some(Msg::OaEdStartAddProp),
+                KeyCode::Char('x') => Some(Msg::OaEdDeleteProp),
+                KeyCode::Char(' ') => Some(Msg::OaEdTogglePropRequired),
+                KeyCode::Char('t') => Some(Msg::OaEdCyclePropType(1)),
+                KeyCode::Char('a') => Some(Msg::OaEdTogglePropNullable),
+                KeyCode::Char('f') => Some(Msg::OaEdCyclePropFormat(1)),
+                KeyCode::Char('r') => Some(Msg::OaEdStartRenameProp),
+                KeyCode::Char('i') => Some(Msg::OaEdStartEditPropMin),
+                KeyCode::Char('k') => Some(Msg::OaEdStartEditPropMax),
+                KeyCode::Char('/') => Some(Msg::OaEdStartEditPropPattern),
+                KeyCode::Char('e') => Some(Msg::OaEdStartEditPropEnum),
+                _ => None,
+            };
+        }
+
+        return match key.code {
+            KeyCode::PageUp => Some(Msg::OaEdScrollPreview(-6)),
+            KeyCode::PageDown => Some(Msg::OaEdScrollPreview(6)),
+            KeyCode::Up if ctrl => Some(Msg::OaEdScrollPreview(-1)),
+            KeyCode::Down if ctrl => Some(Msg::OaEdScrollPreview(1)),
+            KeyCode::Tab => Some(Msg::OaEdMoveEndpoint(1)),
+            KeyCode::Up => Some(Msg::OaEdMoveEndpoint(-1)),
+            KeyCode::Down => Some(Msg::OaEdMoveEndpoint(1)),
+            KeyCode::Char('g') => Some(Msg::OaEdTogglePane),
+            KeyCode::Char('n') => Some(Msg::OaEdStartAddEndpoint),
+            KeyCode::Char('D') => Some(Msg::OaEdDeleteEndpoint),
+            KeyCode::Char('m') => Some(Msg::OaEdCycleMethod(1)),
+            KeyCode::Char('s') => Some(Msg::OaEdCycleStatus(1)),
+            KeyCode::Char('c') => Some(Msg::OaEdCycleReqContentType(1)),
+            KeyCode::Char('r') => Some(Msg::OaEdCycleReqBody(1)),
+            KeyCode::Char('p') => Some(Msg::OaEdCycleRespBody(1)),
+            KeyCode::Char('u') => Some(Msg::OaEdStartEditPath),
+            KeyCode::Char('t') => Some(Msg::OaEdStartEditTitle),
+            KeyCode::Char('v') => Some(Msg::OaEdStartEditVersion),
+            KeyCode::Char('b') => Some(Msg::OaEdStartEditBaseUrl),
+            _ => None,
+        };
+    }
+
     // Modal picker overlay (templates / projects / agents): arrow
     // keys + Enter / Esc. The picker itself is message-agnostic;
     // accepting runs the per-item `Msg` stored in the picker.
@@ -233,15 +310,18 @@ pub fn translate(model: &Model, key: KeyEvent) -> Option<Msg> {
             .fields
             .get(form.cursor)
             .is_some_and(|f| matches!(f.kind, Some(lattice_core::fields::FieldKind::SequenceGram)));
-        let focused_codeblocks = form.fields.get(form.cursor).is_some_and(|f| {
-            matches!(
-                f.kind,
-                Some(lattice_core::fields::FieldKind::CodeBlocks)
-            )
-        });
-        let focused_gherkin = form.fields.get(form.cursor).is_some_and(|f| {
-            matches!(f.kind, Some(lattice_core::fields::FieldKind::Gherkin))
-        });
+        let focused_codeblocks = form
+            .fields
+            .get(form.cursor)
+            .is_some_and(|f| matches!(f.kind, Some(lattice_core::fields::FieldKind::CodeBlocks)));
+        let focused_gherkin = form
+            .fields
+            .get(form.cursor)
+            .is_some_and(|f| matches!(f.kind, Some(lattice_core::fields::FieldKind::Gherkin)));
+        let focused_openapi = form
+            .fields
+            .get(form.cursor)
+            .is_some_and(|f| matches!(f.kind, Some(lattice_core::fields::FieldKind::OpenApi)));
         // Submit bindings, in order of robustness across terminals:
         //   * `F2`              — universally reliable
         //   * `Ctrl+S`          — works once raw mode disables IXON; most
@@ -279,6 +359,7 @@ pub fn translate(model: &Model, key: KeyEvent) -> Option<Msg> {
             KeyCode::F(3) if focused_sequence => Some(Msg::OpenSequenceEditor),
             KeyCode::F(4) if focused_codeblocks => Some(Msg::OpenCodeEditor),
             KeyCode::F(5) if focused_gherkin => Some(Msg::OpenGherkinEditor),
+            KeyCode::F(6) if focused_openapi => Some(Msg::OpenOpenApiEditor),
             KeyCode::Up if focused_multiline => Some(Msg::FormCaretUp),
             KeyCode::Down if focused_multiline => Some(Msg::FormCaretDown),
             KeyCode::Up => Some(Msg::FormPrev),

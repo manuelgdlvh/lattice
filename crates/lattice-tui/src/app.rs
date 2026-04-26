@@ -109,28 +109,36 @@ impl App {
                     }
                 }
                 AppEvent::Terminal(CtEvent::Mouse(m)) => {
-                    // Lightweight mouse support: wheel scroll drives the Tasks prompt preview.
-                    // Only when no overlay is open so scrolling doesn't fight modals.
-                    let overlays_open = model.palette_open
-                        || model.confirm.is_some()
-                        || model.form.is_some()
-                        || model.picker.is_some()
-                        || model.sequence_editor.is_some()
-                        || model.code_editor.is_some()
-                        || model.gherkin_editor.is_some();
-                    if !overlays_open
-                        && matches!(model.screen, crate::model::Screen::Tasks)
-                        && matches!(
-                            m.kind,
-                            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
-                        )
-                    {
+                    // Lightweight mouse support:
+                    // - wheel scroll drives the OpenAPI/JSON Schema preview panes when those modals are open
+                    // - otherwise, wheel scroll drives the Tasks prompt preview (but only if no overlay is open)
+                    if matches!(
+                        m.kind,
+                        MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+                    ) {
                         let delta = match m.kind {
                             MouseEventKind::ScrollUp => -3,
                             MouseEventKind::ScrollDown => 3,
                             _ => 0,
                         };
-                        if delta != 0 {
+
+                        if delta != 0 && model.openapi_editor.is_some() {
+                            self.run_update(
+                                &mut model,
+                                crate::model::Msg::OaEdScrollPreview(delta),
+                            )
+                            .await;
+                            continue;
+                        }
+                        let overlays_open = model.palette_open
+                            || model.confirm.is_some()
+                            || model.form.is_some()
+                            || model.picker.is_some()
+                            || model.sequence_editor.is_some()
+                            || model.code_editor.is_some()
+                            || model.gherkin_editor.is_some()
+                            || model.openapi_editor.is_some();
+                        if !overlays_open && matches!(model.screen, crate::model::Screen::Tasks) {
                             self.run_update(&mut model, crate::model::Msg::TaskPromptScroll(delta))
                                 .await;
                         }
@@ -728,9 +736,8 @@ fn parse_field_value(
         | FieldKind::SequenceGram
         | FieldKind::CodeBlocks
         | FieldKind::Gherkin
-        | FieldKind::Select => {
-            serde_json::Value::String(raw.to_string())
-        }
+        | FieldKind::OpenApi
+        | FieldKind::Select => serde_json::Value::String(raw.to_string()),
         FieldKind::Multiselect => serde_json::Value::Array(
             trimmed
                 .split(',')

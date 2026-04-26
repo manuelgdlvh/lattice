@@ -69,6 +69,133 @@ pub struct Model {
     pub code_editor: Option<CodeEditorState>,
     /// Modal Gherkin test case editor for `gherkin` fields.
     pub gherkin_editor: Option<GherkinEditorState>,
+    /// Modal OpenAPI contract editor for `openapi` fields.
+    pub openapi_editor: Option<OpenApiEditorState>,
+    // (json-schema removed)
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OpenApiEditorState {
+    pub form_field_index: usize,
+    pub title: String,
+    pub version: String,
+    pub base_url: String,
+    pub endpoints: Vec<OpenApiEndpoint>,
+    pub endpoint_cursor: usize,
+    pub schemas: Vec<OpenApiSchema>,
+    pub schema_cursor: usize,
+    pub prop_cursor: usize,
+    pub preview_scroll: usize,
+    pub mode: OpenApiEditorMode,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OpenApiEndpoint {
+    pub method: OpenApiMethod,
+    pub path: String,
+    pub request_content_type: String,
+    pub request_body: OpenApiBody,
+    pub response_status: u16,
+    pub response_content_type: String,
+    pub response_body: OpenApiBody,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OpenApiMethod {
+    Get,
+    Post,
+    Put,
+    Patch,
+    Delete,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum OpenApiBody {
+    None,
+    String,
+    Integer,
+    Number,
+    Boolean,
+    SchemaRef(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OpenApiSchema {
+    pub name: String,
+    pub additional_properties: bool,
+    pub properties: Vec<OpenApiSchemaProp>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OpenApiSchemaProp {
+    pub name: String,
+    pub kind: OpenApiPropType,
+    pub required: bool,
+    pub nullable: bool,
+    pub format: OpenApiStringFormat,
+    pub min: Option<i64>,
+    pub max: Option<i64>,
+    pub pattern: String,
+    pub enum_values: Vec<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OpenApiPropType {
+    String,
+    Integer,
+    Number,
+    Boolean,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OpenApiStringFormat {
+    None,
+    Email,
+    Password,
+    Uri,
+}
+
+impl Default for OpenApiEndpoint {
+    fn default() -> Self {
+        Self {
+            method: OpenApiMethod::Get,
+            path: "/".into(),
+            request_content_type: "application/json".into(),
+            request_body: OpenApiBody::None,
+            response_status: 200,
+            response_content_type: "application/json".into(),
+            response_body: OpenApiBody::None,
+        }
+    }
+}
+
+impl Default for OpenApiSchema {
+    fn default() -> Self {
+        Self {
+            name: "Schema".into(),
+            additional_properties: false,
+            properties: Vec::new(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum OpenApiEditorMode {
+    Browse,
+    Schemas,
+    AddEndpoint,
+    AddSchema { input: String },
+    RenameSchema { input: String },
+    AddProp { input: String },
+    RenameProp { input: String },
+    EditPropPattern { input: String },
+    EditPropEnum { input: String },
+    EditPropMin { input: String },
+    EditPropMax { input: String },
+    EditPath { input: String },
+    EditTitle { input: String },
+    EditVersion { input: String },
+    EditBaseUrl { input: String },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -425,6 +552,7 @@ impl Model {
             sequence_editor: None,
             code_editor: None,
             gherkin_editor: None,
+            openapi_editor: None,
         }
     }
 
@@ -575,6 +703,44 @@ pub enum Msg {
     GhEdCaretDown,
     GhEdCaretHome,
     GhEdCaretEnd,
+
+    // openapi editor ---------------------------------------------------
+    OpenOpenApiEditor,
+    OaEdCancel,
+    OaEdSave,
+    OaEdMoveEndpoint(isize),
+    OaEdScrollPreview(isize),
+    OaEdStartAddEndpoint,
+    OaEdDeleteEndpoint,
+    OaEdTogglePane,
+    OaEdMoveSchema(isize),
+    OaEdStartAddSchema,
+    OaEdDeleteSchema,
+    OaEdStartRenameSchema,
+    OaEdStartAddProp,
+    OaEdDeleteProp,
+    OaEdTogglePropRequired,
+    OaEdCyclePropType(isize),
+    OaEdTogglePropNullable,
+    OaEdCyclePropFormat(isize),
+    OaEdStartRenameProp,
+    OaEdStartEditPropMin,
+    OaEdStartEditPropMax,
+    OaEdStartEditPropPattern,
+    OaEdStartEditPropEnum,
+    OaEdMoveProp(isize),
+    OaEdCycleMethod(isize),
+    OaEdCycleReqBody(isize),
+    OaEdCycleRespBody(isize),
+    OaEdCycleStatus(isize),
+    OaEdCycleReqContentType(isize),
+    OaEdStartEditPath,
+    OaEdStartEditTitle,
+    OaEdStartEditVersion,
+    OaEdStartEditBaseUrl,
+    OaEdInputChar(char),
+    OaEdBackspace,
+    OaEdConfirm,
 
     // results from async actions --------------------------------------
     ConfirmDeleteTemplate(TemplateId),
@@ -946,6 +1112,13 @@ pub fn update(model: &mut Model, msg: Msg) -> Option<Cmd> {
                     ));
                     return None;
                 }
+                if matches!(field.kind, Some(FieldKind::OpenApi)) {
+                    model.toasts.push(Toast::new(
+                        ToastLevel::Info,
+                        "openapi is read-only here; press F6 to edit",
+                    ));
+                    return None;
+                }
                 field.insert_char(c);
             }
             None
@@ -972,6 +1145,13 @@ pub fn update(model: &mut Model, msg: Msg) -> Option<Cmd> {
                     model.toasts.push(Toast::new(
                         ToastLevel::Info,
                         "gherkin is read-only here; press F5 to edit",
+                    ));
+                    return None;
+                }
+                if matches!(field.kind, Some(FieldKind::OpenApi)) {
+                    model.toasts.push(Toast::new(
+                        ToastLevel::Info,
+                        "openapi is read-only here; press F6 to edit",
                     ));
                     return None;
                 }
@@ -1641,7 +1821,11 @@ pub fn update(model: &mut Model, msg: Msg) -> Option<Cmd> {
                     CodeEditorMode::EditLanguage { input } => {
                         let lang = input.trim();
                         if let Some(b) = ed.blocks.get_mut(ed.block_cursor) {
-                            b.language = if lang.is_empty() { "text".into() } else { lang.into() };
+                            b.language = if lang.is_empty() {
+                                "text".into()
+                            } else {
+                                lang.into()
+                            };
                         }
                     }
                     CodeEditorMode::EditCode { editor } => {
@@ -2046,6 +2230,533 @@ pub fn update(model: &mut Model, msg: Msg) -> Option<Cmd> {
             None
         }
 
+        // openapi editor ---------------------------------------------------
+        Msg::OpenOpenApiEditor => {
+            let Some(form) = &model.form else {
+                return None;
+            };
+            let Some(field) = form.fields.get(form.cursor) else {
+                return None;
+            };
+            if !matches!(field.kind, Some(FieldKind::OpenApi)) {
+                return None;
+            }
+            let (title, version, base_url, endpoints) = parse_openapi_contract(&field.value);
+            model.openapi_editor = Some(OpenApiEditorState {
+                form_field_index: form.cursor,
+                title,
+                version,
+                base_url,
+                endpoints,
+                endpoint_cursor: 0,
+                schemas: Vec::new(),
+                schema_cursor: 0,
+                prop_cursor: 0,
+                preview_scroll: 0,
+                mode: OpenApiEditorMode::Browse,
+            });
+            None
+        }
+        Msg::OaEdCancel => {
+            model.openapi_editor = None;
+            None
+        }
+        Msg::OaEdSave => {
+            let Some(ed) = model.openapi_editor.take() else {
+                return None;
+            };
+            if let Some(form) = &mut model.form
+                && let Some(f) = form.fields.get_mut(ed.form_field_index)
+            {
+                f.value = render_openapi_contract(
+                    &ed.title,
+                    &ed.version,
+                    &ed.base_url,
+                    &ed.endpoints,
+                    &ed.schemas,
+                );
+                f.set_caret(f.value.len());
+            }
+            None
+        }
+        Msg::OaEdMoveEndpoint(d) => {
+            if let Some(ed) = &mut model.openapi_editor
+                && matches!(ed.mode, OpenApiEditorMode::Browse)
+            {
+                move_cursor(&mut ed.endpoint_cursor, d, ed.endpoints.len());
+                ed.preview_scroll = 0;
+            }
+            None
+        }
+        Msg::OaEdTogglePane => {
+            if let Some(ed) = &mut model.openapi_editor {
+                ed.mode = match ed.mode.clone() {
+                    OpenApiEditorMode::Browse => OpenApiEditorMode::Schemas,
+                    OpenApiEditorMode::Schemas => OpenApiEditorMode::Browse,
+                    other => other,
+                };
+                ed.preview_scroll = 0;
+            }
+            None
+        }
+        Msg::OaEdMoveSchema(d) => {
+            if let Some(ed) = &mut model.openapi_editor
+                && matches!(ed.mode, OpenApiEditorMode::Schemas)
+            {
+                move_cursor(&mut ed.schema_cursor, d, ed.schemas.len());
+                ed.prop_cursor = 0;
+                ed.preview_scroll = 0;
+            }
+            None
+        }
+        Msg::OaEdMoveProp(d) => {
+            if let Some(ed) = &mut model.openapi_editor
+                && matches!(ed.mode, OpenApiEditorMode::Schemas)
+                && let Some(s) = ed.schemas.get(ed.schema_cursor)
+            {
+                move_cursor(&mut ed.prop_cursor, d, s.properties.len());
+            }
+            None
+        }
+        Msg::OaEdStartAddSchema => {
+            if let Some(ed) = &mut model.openapi_editor
+                && matches!(ed.mode, OpenApiEditorMode::Schemas)
+            {
+                ed.mode = OpenApiEditorMode::AddSchema {
+                    input: String::new(),
+                };
+            }
+            None
+        }
+        Msg::OaEdStartRenameSchema => {
+            if let Some(ed) = &mut model.openapi_editor
+                && matches!(ed.mode, OpenApiEditorMode::Schemas)
+                && let Some(s) = ed.schemas.get(ed.schema_cursor)
+            {
+                ed.mode = OpenApiEditorMode::RenameSchema {
+                    input: s.name.clone(),
+                };
+            }
+            None
+        }
+        Msg::OaEdDeleteSchema => {
+            if let Some(ed) = &mut model.openapi_editor
+                && matches!(ed.mode, OpenApiEditorMode::Schemas)
+                && !ed.schemas.is_empty()
+            {
+                let idx = ed.schema_cursor.min(ed.schemas.len().saturating_sub(1));
+                let removed = ed.schemas.remove(idx).name;
+                for ep in &mut ed.endpoints {
+                    if matches!(&ep.request_body, OpenApiBody::SchemaRef(name) if name == &removed)
+                    {
+                        ep.request_body = OpenApiBody::None;
+                    }
+                    if matches!(&ep.response_body, OpenApiBody::SchemaRef(name) if name == &removed)
+                    {
+                        ep.response_body = OpenApiBody::None;
+                    }
+                }
+                ed.schema_cursor = ed.schema_cursor.min(ed.schemas.len().saturating_sub(1));
+                ed.prop_cursor = 0;
+            }
+            None
+        }
+        Msg::OaEdStartAddProp => {
+            if let Some(ed) = &mut model.openapi_editor
+                && matches!(ed.mode, OpenApiEditorMode::Schemas)
+                && ed.schemas.get(ed.schema_cursor).is_some()
+            {
+                ed.mode = OpenApiEditorMode::AddProp {
+                    input: String::new(),
+                };
+            }
+            None
+        }
+        Msg::OaEdStartRenameProp => {
+            if let Some(ed) = &mut model.openapi_editor
+                && matches!(ed.mode, OpenApiEditorMode::Schemas)
+                && let Some(s) = ed.schemas.get(ed.schema_cursor)
+                && let Some(p) = s.properties.get(ed.prop_cursor)
+            {
+                ed.mode = OpenApiEditorMode::RenameProp {
+                    input: p.name.clone(),
+                };
+            }
+            None
+        }
+        Msg::OaEdDeleteProp => {
+            if let Some(ed) = &mut model.openapi_editor
+                && matches!(ed.mode, OpenApiEditorMode::Schemas)
+                && let Some(s) = ed.schemas.get_mut(ed.schema_cursor)
+                && !s.properties.is_empty()
+            {
+                let idx = ed.prop_cursor.min(s.properties.len().saturating_sub(1));
+                s.properties.remove(idx);
+                ed.prop_cursor = ed.prop_cursor.min(s.properties.len().saturating_sub(1));
+            }
+            None
+        }
+        Msg::OaEdTogglePropRequired => {
+            if let Some(ed) = &mut model.openapi_editor
+                && matches!(ed.mode, OpenApiEditorMode::Schemas)
+                && let Some(s) = ed.schemas.get_mut(ed.schema_cursor)
+                && let Some(p) = s.properties.get_mut(ed.prop_cursor)
+            {
+                p.required = !p.required;
+            }
+            None
+        }
+        Msg::OaEdCyclePropType(d) => {
+            if let Some(ed) = &mut model.openapi_editor
+                && matches!(ed.mode, OpenApiEditorMode::Schemas)
+                && let Some(s) = ed.schemas.get_mut(ed.schema_cursor)
+                && let Some(p) = s.properties.get_mut(ed.prop_cursor)
+            {
+                p.kind = cycle_prop_type(p.kind, d);
+            }
+            None
+        }
+        Msg::OaEdTogglePropNullable => {
+            if let Some(ed) = &mut model.openapi_editor
+                && matches!(ed.mode, OpenApiEditorMode::Schemas)
+                && let Some(s) = ed.schemas.get_mut(ed.schema_cursor)
+                && let Some(p) = s.properties.get_mut(ed.prop_cursor)
+            {
+                p.nullable = !p.nullable;
+            }
+            None
+        }
+        Msg::OaEdCyclePropFormat(d) => {
+            if let Some(ed) = &mut model.openapi_editor
+                && matches!(ed.mode, OpenApiEditorMode::Schemas)
+                && let Some(s) = ed.schemas.get_mut(ed.schema_cursor)
+                && let Some(p) = s.properties.get_mut(ed.prop_cursor)
+                && p.kind == OpenApiPropType::String
+            {
+                p.format = cycle_string_format(p.format, d);
+            }
+            None
+        }
+        Msg::OaEdStartEditPropMin => {
+            if let Some(ed) = &mut model.openapi_editor
+                && matches!(ed.mode, OpenApiEditorMode::Schemas)
+            {
+                ed.mode = OpenApiEditorMode::EditPropMin {
+                    input: String::new(),
+                };
+            }
+            None
+        }
+        Msg::OaEdStartEditPropMax => {
+            if let Some(ed) = &mut model.openapi_editor
+                && matches!(ed.mode, OpenApiEditorMode::Schemas)
+            {
+                ed.mode = OpenApiEditorMode::EditPropMax {
+                    input: String::new(),
+                };
+            }
+            None
+        }
+        Msg::OaEdStartEditPropPattern => {
+            if let Some(ed) = &mut model.openapi_editor
+                && matches!(ed.mode, OpenApiEditorMode::Schemas)
+            {
+                ed.mode = OpenApiEditorMode::EditPropPattern {
+                    input: String::new(),
+                };
+            }
+            None
+        }
+        Msg::OaEdStartEditPropEnum => {
+            if let Some(ed) = &mut model.openapi_editor
+                && matches!(ed.mode, OpenApiEditorMode::Schemas)
+            {
+                ed.mode = OpenApiEditorMode::EditPropEnum {
+                    input: String::new(),
+                };
+            }
+            None
+        }
+        Msg::OaEdScrollPreview(d) => {
+            if let Some(ed) = &mut model.openapi_editor {
+                ed.preview_scroll = apply_delta(ed.preview_scroll, d, usize::MAX);
+            }
+            None
+        }
+        Msg::OaEdStartAddEndpoint => {
+            if let Some(ed) = &mut model.openapi_editor {
+                ed.mode = OpenApiEditorMode::AddEndpoint;
+            }
+            None
+        }
+        Msg::OaEdDeleteEndpoint => {
+            if let Some(ed) = &mut model.openapi_editor
+                && matches!(ed.mode, OpenApiEditorMode::Browse)
+                && !ed.endpoints.is_empty()
+            {
+                let idx = ed.endpoint_cursor.min(ed.endpoints.len().saturating_sub(1));
+                ed.endpoints.remove(idx);
+                if ed.endpoints.is_empty() {
+                    ed.endpoints.push(OpenApiEndpoint::default());
+                }
+                ed.endpoint_cursor = ed.endpoint_cursor.min(ed.endpoints.len().saturating_sub(1));
+            }
+            None
+        }
+        Msg::OaEdCycleMethod(d) => {
+            if let Some(ed) = &mut model.openapi_editor
+                && matches!(ed.mode, OpenApiEditorMode::Browse)
+                && let Some(ep) = ed.endpoints.get_mut(ed.endpoint_cursor)
+            {
+                ep.method = cycle_method(ep.method, d);
+            }
+            None
+        }
+        Msg::OaEdCycleReqBody(d) => {
+            if let Some(ed) = &mut model.openapi_editor
+                && matches!(ed.mode, OpenApiEditorMode::Browse)
+                && let Some(ep) = ed.endpoints.get_mut(ed.endpoint_cursor)
+            {
+                ep.request_body = cycle_body_with_schemas(ep.request_body.clone(), d, &ed.schemas);
+            }
+            None
+        }
+        Msg::OaEdCycleRespBody(d) => {
+            if let Some(ed) = &mut model.openapi_editor
+                && matches!(ed.mode, OpenApiEditorMode::Browse)
+                && let Some(ep) = ed.endpoints.get_mut(ed.endpoint_cursor)
+            {
+                ep.response_body =
+                    cycle_body_with_schemas(ep.response_body.clone(), d, &ed.schemas);
+            }
+            None
+        }
+        Msg::OaEdCycleStatus(d) => {
+            if let Some(ed) = &mut model.openapi_editor
+                && matches!(ed.mode, OpenApiEditorMode::Browse)
+                && let Some(ep) = ed.endpoints.get_mut(ed.endpoint_cursor)
+            {
+                ep.response_status = cycle_status(ep.response_status, d);
+            }
+            None
+        }
+        Msg::OaEdCycleReqContentType(d) => {
+            if let Some(ed) = &mut model.openapi_editor
+                && matches!(ed.mode, OpenApiEditorMode::Browse)
+                && let Some(ep) = ed.endpoints.get_mut(ed.endpoint_cursor)
+            {
+                // c: keep req/resp in lockstep for speed; use r/p for body shape.
+                let next = cycle_content_type(&ep.request_content_type, d);
+                ep.request_content_type = next.clone();
+                ep.response_content_type = next;
+            }
+            None
+        }
+        Msg::OaEdStartEditPath => {
+            if let Some(ed) = &mut model.openapi_editor
+                && let Some(ep) = ed.endpoints.get(ed.endpoint_cursor)
+            {
+                ed.mode = OpenApiEditorMode::EditPath {
+                    input: ep.path.clone(),
+                };
+            }
+            None
+        }
+        Msg::OaEdStartEditTitle => {
+            if let Some(ed) = &mut model.openapi_editor {
+                ed.mode = OpenApiEditorMode::EditTitle {
+                    input: ed.title.clone(),
+                };
+            }
+            None
+        }
+        Msg::OaEdStartEditVersion => {
+            if let Some(ed) = &mut model.openapi_editor {
+                ed.mode = OpenApiEditorMode::EditVersion {
+                    input: ed.version.clone(),
+                };
+            }
+            None
+        }
+        Msg::OaEdStartEditBaseUrl => {
+            if let Some(ed) = &mut model.openapi_editor {
+                ed.mode = OpenApiEditorMode::EditBaseUrl {
+                    input: ed.base_url.clone(),
+                };
+            }
+            None
+        }
+        Msg::OaEdInputChar(c) => {
+            if let Some(ed) = &mut model.openapi_editor {
+                match &mut ed.mode {
+                    OpenApiEditorMode::AddSchema { input }
+                    | OpenApiEditorMode::RenameSchema { input }
+                    | OpenApiEditorMode::AddProp { input }
+                    | OpenApiEditorMode::RenameProp { input }
+                    | OpenApiEditorMode::EditPropPattern { input }
+                    | OpenApiEditorMode::EditPropEnum { input }
+                    | OpenApiEditorMode::EditPropMin { input }
+                    | OpenApiEditorMode::EditPropMax { input }
+                    | OpenApiEditorMode::EditPath { input }
+                    | OpenApiEditorMode::EditTitle { input }
+                    | OpenApiEditorMode::EditVersion { input }
+                    | OpenApiEditorMode::EditBaseUrl { input } => input.push(c),
+                    _ => {}
+                }
+            }
+            None
+        }
+        Msg::OaEdBackspace => {
+            if let Some(ed) = &mut model.openapi_editor {
+                match &mut ed.mode {
+                    OpenApiEditorMode::AddSchema { input }
+                    | OpenApiEditorMode::RenameSchema { input }
+                    | OpenApiEditorMode::AddProp { input }
+                    | OpenApiEditorMode::RenameProp { input }
+                    | OpenApiEditorMode::EditPropPattern { input }
+                    | OpenApiEditorMode::EditPropEnum { input }
+                    | OpenApiEditorMode::EditPropMin { input }
+                    | OpenApiEditorMode::EditPropMax { input }
+                    | OpenApiEditorMode::EditPath { input }
+                    | OpenApiEditorMode::EditTitle { input }
+                    | OpenApiEditorMode::EditVersion { input }
+                    | OpenApiEditorMode::EditBaseUrl { input } => {
+                        input.pop();
+                    }
+                    _ => {}
+                }
+            }
+            None
+        }
+        Msg::OaEdConfirm => {
+            if let Some(ed) = &mut model.openapi_editor {
+                match &mut ed.mode {
+                    OpenApiEditorMode::AddEndpoint => {
+                        ed.endpoints.push(OpenApiEndpoint::default());
+                        ed.endpoint_cursor = ed.endpoints.len().saturating_sub(1);
+                    }
+                    OpenApiEditorMode::AddSchema { input } => {
+                        let name = input.trim();
+                        if !name.is_empty() {
+                            ed.schemas.push(OpenApiSchema {
+                                name: name.to_string(),
+                                ..OpenApiSchema::default()
+                            });
+                            ed.schema_cursor = ed.schemas.len().saturating_sub(1);
+                            ed.prop_cursor = 0;
+                        }
+                    }
+                    OpenApiEditorMode::RenameSchema { input } => {
+                        let name = input.trim();
+                        if !name.is_empty()
+                            && let Some(s) = ed.schemas.get_mut(ed.schema_cursor)
+                        {
+                            s.name = name.to_string();
+                        }
+                    }
+                    OpenApiEditorMode::AddProp { input } => {
+                        let name = input.trim();
+                        if !name.is_empty()
+                            && let Some(s) = ed.schemas.get_mut(ed.schema_cursor)
+                        {
+                            s.properties.push(OpenApiSchemaProp {
+                                name: name.to_string(),
+                                kind: OpenApiPropType::String,
+                                required: false,
+                                nullable: false,
+                                format: OpenApiStringFormat::None,
+                                min: None,
+                                max: None,
+                                pattern: String::new(),
+                                enum_values: Vec::new(),
+                            });
+                            ed.prop_cursor = s.properties.len().saturating_sub(1);
+                        }
+                    }
+                    OpenApiEditorMode::RenameProp { input } => {
+                        let name = input.trim();
+                        if !name.is_empty()
+                            && let Some(s) = ed.schemas.get_mut(ed.schema_cursor)
+                            && let Some(p) = s.properties.get_mut(ed.prop_cursor)
+                        {
+                            p.name = name.to_string();
+                        }
+                    }
+                    OpenApiEditorMode::EditPropPattern { input } => {
+                        if let Some(s) = ed.schemas.get_mut(ed.schema_cursor)
+                            && let Some(p) = s.properties.get_mut(ed.prop_cursor)
+                        {
+                            p.pattern = input.trim().to_string();
+                        }
+                    }
+                    OpenApiEditorMode::EditPropEnum { input } => {
+                        if let Some(s) = ed.schemas.get_mut(ed.schema_cursor)
+                            && let Some(p) = s.properties.get_mut(ed.prop_cursor)
+                        {
+                            p.enum_values = input
+                                .split(',')
+                                .map(|x| x.trim().to_string())
+                                .filter(|x| !x.is_empty())
+                                .collect();
+                        }
+                    }
+                    OpenApiEditorMode::EditPropMin { input } => {
+                        if let Some(s) = ed.schemas.get_mut(ed.schema_cursor)
+                            && let Some(p) = s.properties.get_mut(ed.prop_cursor)
+                        {
+                            p.min = input.trim().parse::<i64>().ok();
+                        }
+                    }
+                    OpenApiEditorMode::EditPropMax { input } => {
+                        if let Some(s) = ed.schemas.get_mut(ed.schema_cursor)
+                            && let Some(p) = s.properties.get_mut(ed.prop_cursor)
+                        {
+                            p.max = input.trim().parse::<i64>().ok();
+                        }
+                    }
+                    OpenApiEditorMode::EditPath { input } => {
+                        if let Some(ep) = ed.endpoints.get_mut(ed.endpoint_cursor) {
+                            let v = input.trim();
+                            if !v.is_empty() {
+                                ep.path = v.to_string();
+                            }
+                        }
+                    }
+                    OpenApiEditorMode::EditTitle { input } => {
+                        let v = input.trim();
+                        if !v.is_empty() {
+                            ed.title = v.to_string();
+                        }
+                    }
+                    OpenApiEditorMode::EditVersion { input } => {
+                        let v = input.trim();
+                        if !v.is_empty() {
+                            ed.version = v.to_string();
+                        }
+                    }
+                    OpenApiEditorMode::EditBaseUrl { input } => {
+                        let v = input.trim();
+                        if !v.is_empty() {
+                            ed.base_url = v.to_string();
+                        }
+                    }
+                    OpenApiEditorMode::Browse | OpenApiEditorMode::Schemas => {}
+                }
+                ed.mode = match ed.mode {
+                    OpenApiEditorMode::Schemas
+                    | OpenApiEditorMode::AddSchema { .. }
+                    | OpenApiEditorMode::RenameSchema { .. }
+                    | OpenApiEditorMode::AddProp { .. }
+                    | OpenApiEditorMode::RenameProp { .. }
+                    | OpenApiEditorMode::EditPropPattern { .. }
+                    | OpenApiEditorMode::EditPropEnum { .. }
+                    | OpenApiEditorMode::EditPropMin { .. }
+                    | OpenApiEditorMode::EditPropMax { .. } => OpenApiEditorMode::Schemas,
+                    _ => OpenApiEditorMode::Browse,
+                };
+            }
+            None
+        }
         Msg::ConfirmDeleteTemplate(id) => Some(Cmd::DeleteTemplate(id)),
         Msg::ConfirmDeleteTask(t) => Some(Cmd::DeleteTask(t)),
     }
@@ -2068,6 +2779,93 @@ fn apply_delta(cur: usize, delta: isize, cap: usize) -> usize {
     let delta_i = i128::try_from(delta).unwrap_or(0);
     let clamped = (cur_i + delta_i).clamp(0, cap_i);
     usize::try_from(clamped).unwrap_or(0)
+}
+
+fn yaml_escape(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+fn cycle_method(cur: OpenApiMethod, d: isize) -> OpenApiMethod {
+    let all = [
+        OpenApiMethod::Get,
+        OpenApiMethod::Post,
+        OpenApiMethod::Put,
+        OpenApiMethod::Patch,
+        OpenApiMethod::Delete,
+    ];
+    cycle_wrap(&all, cur, d)
+}
+
+fn cycle_body_with_schemas(cur: OpenApiBody, d: isize, schemas: &[OpenApiSchema]) -> OpenApiBody {
+    let mut all: Vec<OpenApiBody> = vec![
+        OpenApiBody::None,
+        OpenApiBody::String,
+        OpenApiBody::Integer,
+        OpenApiBody::Number,
+        OpenApiBody::Boolean,
+    ];
+    for s in schemas {
+        let name = s.name.trim();
+        if !name.is_empty() {
+            all.push(OpenApiBody::SchemaRef(name.to_string()));
+        }
+    }
+    // If current schema ref was deleted/renamed, treat it as None for cycling.
+    let cur_norm = match &cur {
+        OpenApiBody::SchemaRef(name) if !all.iter().any(|x| x == &cur) => OpenApiBody::None,
+        _ => cur,
+    };
+    cycle_wrap(&all, cur_norm, d)
+}
+
+fn cycle_prop_type(cur: OpenApiPropType, d: isize) -> OpenApiPropType {
+    let all = [
+        OpenApiPropType::String,
+        OpenApiPropType::Integer,
+        OpenApiPropType::Number,
+        OpenApiPropType::Boolean,
+    ];
+    cycle_wrap(&all, cur, d)
+}
+
+fn cycle_string_format(cur: OpenApiStringFormat, d: isize) -> OpenApiStringFormat {
+    let all = [
+        OpenApiStringFormat::None,
+        OpenApiStringFormat::Email,
+        OpenApiStringFormat::Password,
+        OpenApiStringFormat::Uri,
+    ];
+    cycle_wrap(&all, cur, d)
+}
+
+fn cycle_status(cur: u16, d: isize) -> u16 {
+    let all: [u16; 11] = [200, 201, 204, 400, 401, 403, 404, 409, 422, 500, 502];
+    cycle_wrap(&all, cur, d)
+}
+
+fn cycle_content_type(cur: &str, d: isize) -> String {
+    let all = [
+        "application/json",
+        "text/plain",
+        "application/xml",
+        "text/markdown",
+    ];
+    let idx = all.iter().position(|x| *x == cur).unwrap_or(0);
+    let picked = cycle_wrap(&all, all[idx], d);
+    picked.to_string()
+}
+
+fn cycle_wrap<T: Clone + Eq>(all: &[T], cur: T, d: isize) -> T {
+    if all.is_empty() {
+        return cur;
+    }
+    let idx = all.iter().position(|x| *x == cur).unwrap_or(0);
+    let n = i128::try_from(all.len()).unwrap_or(1).max(1);
+    let cur_i = i128::try_from(idx).unwrap_or(0);
+    let d_i = i128::try_from(d).unwrap_or(0);
+    let wrapped = ((cur_i + d_i) % n + n) % n;
+    let next = usize::try_from(wrapped).unwrap_or(0);
+    all[next].clone()
 }
 
 fn parse_code_blocks(src: &str) -> Vec<CodeBlock> {
@@ -2142,6 +2940,416 @@ fn parse_code_blocks(src: &str) -> Vec<CodeBlock> {
     out
 }
 
+fn parse_openapi_contract(src: &str) -> (String, String, String, Vec<OpenApiEndpoint>) {
+    let trimmed = src.trim();
+    if trimmed.is_empty() {
+        return (
+            "API Contract".into(),
+            "1.0.0".into(),
+            "https://api.example.com".into(),
+            vec![OpenApiEndpoint::default()],
+        );
+    }
+
+    // Best-effort parser for the YAML we render. If it doesn't match,
+    // we fall back to defaults but preserve the field as editable.
+    let mut title = "API Contract".to_string();
+    let mut version = "1.0.0".to_string();
+    let mut base_url = "https://api.example.com".to_string();
+    let mut endpoints: Vec<OpenApiEndpoint> = Vec::new();
+
+    let mut cur_path: Option<String> = None;
+    let mut cur_method: Option<OpenApiMethod> = None;
+    let mut cur_status: u16 = 200;
+    let mut seen_req_ct: Option<String> = None;
+    let mut seen_resp_ct: Option<String> = None;
+
+    for line in src.lines() {
+        let l = line.trim_end();
+        let t = l.trim_start();
+
+        if t.starts_with("title:") {
+            title = t
+                .trim_start_matches("title:")
+                .trim()
+                .trim_matches('"')
+                .to_string();
+            continue;
+        }
+        if t.starts_with("version:") {
+            version = t
+                .trim_start_matches("version:")
+                .trim()
+                .trim_matches('"')
+                .to_string();
+            continue;
+        }
+        if t.starts_with("- url:") {
+            base_url = t
+                .trim_start_matches("- url:")
+                .trim()
+                .trim_matches('"')
+                .to_string();
+            continue;
+        }
+
+        if l.starts_with("  /") && l.ends_with(':') {
+            if let (Some(p), Some(m)) = (cur_path.take(), cur_method.take()) {
+                endpoints.push(OpenApiEndpoint {
+                    method: m,
+                    path: p,
+                    request_content_type: seen_req_ct
+                        .clone()
+                        .unwrap_or_else(|| "application/json".into()),
+                    request_body: OpenApiBody::None,
+                    response_status: cur_status,
+                    response_content_type: seen_resp_ct
+                        .clone()
+                        .unwrap_or_else(|| "application/json".into()),
+                    response_body: OpenApiBody::None,
+                });
+            }
+            cur_path = Some(l.trim().trim_end_matches(':').to_string());
+            cur_method = None;
+            cur_status = 200;
+            seen_req_ct = None;
+            seen_resp_ct = None;
+            continue;
+        }
+
+        if l.starts_with("    get:") {
+            cur_method = Some(OpenApiMethod::Get);
+        } else if l.starts_with("    post:") {
+            cur_method = Some(OpenApiMethod::Post);
+        } else if l.starts_with("    put:") {
+            cur_method = Some(OpenApiMethod::Put);
+        } else if l.starts_with("    patch:") {
+            cur_method = Some(OpenApiMethod::Patch);
+        } else if l.starts_with("    delete:") {
+            cur_method = Some(OpenApiMethod::Delete);
+        } else if t.starts_with("'") && t.ends_with("':") {
+            let code = t.trim_matches('\'').trim_end_matches(':');
+            if let Ok(n) = code.parse::<u16>() {
+                cur_status = n;
+            }
+        } else if t == "application/json:"
+            || t == "text/plain:"
+            || t == "application/xml:"
+            || t == "text/markdown:"
+        {
+            let ct = t.trim_end_matches(':').to_string();
+            // heuristic: first seen is request, second is response
+            if seen_req_ct.is_none() {
+                seen_req_ct = Some(ct);
+            } else {
+                seen_resp_ct = Some(ct);
+            }
+        }
+    }
+
+    if let (Some(p), Some(m)) = (cur_path.take(), cur_method.take()) {
+        endpoints.push(OpenApiEndpoint {
+            method: m,
+            path: p,
+            request_content_type: seen_req_ct.unwrap_or_else(|| "application/json".into()),
+            request_body: OpenApiBody::None,
+            response_status: cur_status,
+            response_content_type: seen_resp_ct.unwrap_or_else(|| "application/json".into()),
+            response_body: OpenApiBody::None,
+        });
+    }
+
+    if endpoints.is_empty() {
+        endpoints.push(OpenApiEndpoint::default());
+    }
+    (title, version, base_url, endpoints)
+}
+
+fn render_openapi_contract(
+    title: &str,
+    version: &str,
+    base_url: &str,
+    endpoints: &[OpenApiEndpoint],
+    schemas: &[OpenApiSchema],
+) -> String {
+    let mut out = String::new();
+    out.push_str("openapi: \"3.1.0\"\n");
+    out.push_str("info:\n");
+    out.push_str(&format!("  title: \"{}\"\n", yaml_escape(title)));
+    out.push_str(&format!("  version: \"{}\"\n", yaml_escape(version)));
+    out.push_str("servers:\n");
+    out.push_str(&format!("  - url: \"{}\"\n", yaml_escape(base_url)));
+    if !schemas.is_empty() {
+        out.push_str("components:\n");
+        out.push_str("  schemas:\n");
+        for s in schemas {
+            out.push_str(&render_openapi_schema(s));
+        }
+    }
+    out.push_str("paths:\n");
+
+    let mut by_path: std::collections::BTreeMap<&str, Vec<&OpenApiEndpoint>> =
+        std::collections::BTreeMap::new();
+    for ep in endpoints {
+        by_path.entry(ep.path.as_str()).or_default().push(ep);
+    }
+
+    for (path, eps) in by_path {
+        out.push_str(&format!("  {}:\n", path));
+        for ep in eps {
+            out.push_str(&format!("    {}:\n", openapi_method_str(ep.method)));
+            if !matches!(ep.request_body, OpenApiBody::None) {
+                out.push_str("      requestBody:\n");
+                out.push_str("        required: true\n");
+                out.push_str("        content:\n");
+                out.push_str(&format!("          {}:\n", ep.request_content_type));
+                out.push_str("            schema:\n");
+                out.push_str(&render_openapi_body_schema(
+                    &ep.request_body,
+                    "              ",
+                ));
+            }
+            out.push_str("      responses:\n");
+            out.push_str(&format!("        '{}':\n", ep.response_status));
+            if matches!(ep.response_body, OpenApiBody::None) {
+                out.push_str("          description: No response body\n");
+            } else {
+                out.push_str("          description: OK\n");
+                out.push_str("          content:\n");
+                out.push_str(&format!("            {}:\n", ep.response_content_type));
+                out.push_str("              schema:\n");
+                out.push_str(&render_openapi_body_schema(
+                    &ep.response_body,
+                    "                ",
+                ));
+            }
+        }
+    }
+
+    out
+}
+
+fn render_openapi_schema(s: &OpenApiSchema) -> String {
+    let mut out = String::new();
+    let name = s.name.trim();
+    if name.is_empty() {
+        return out;
+    }
+    out.push_str(&format!("    {}:\n", name));
+    out.push_str("      type: object\n");
+    out.push_str(&format!(
+        "      additionalProperties: {}\n",
+        if s.additional_properties {
+            "true"
+        } else {
+            "false"
+        }
+    ));
+    let required: Vec<String> = s
+        .properties
+        .iter()
+        .filter(|p| p.required)
+        .map(|p| p.name.trim().to_string())
+        .filter(|n| !n.is_empty())
+        .collect();
+    if !required.is_empty() {
+        out.push_str("      required:\n");
+        for r in required {
+            out.push_str(&format!("        - {}\n", r));
+        }
+    }
+    out.push_str("      properties:\n");
+    for p in &s.properties {
+        let pname = p.name.trim();
+        if pname.is_empty() {
+            continue;
+        }
+        out.push_str(&format!("        {}:\n", pname));
+        out.push_str(&format!(
+            "          type: {}\n",
+            openapi_prop_type_str(p.kind)
+        ));
+        if p.nullable {
+            out.push_str("          nullable: true\n");
+        }
+        if p.kind == OpenApiPropType::String {
+            if let Some(fmt) = openapi_string_format_str(p.format) {
+                out.push_str(&format!("          format: {}\n", fmt));
+            }
+            if let Some(min) = p.min {
+                out.push_str(&format!("          minLength: {}\n", min));
+            }
+            if let Some(max) = p.max {
+                out.push_str(&format!("          maxLength: {}\n", max));
+            }
+            if !p.pattern.trim().is_empty() {
+                out.push_str(&format!(
+                    "          pattern: \"{}\"\n",
+                    yaml_escape(p.pattern.trim())
+                ));
+            }
+        } else if matches!(p.kind, OpenApiPropType::Integer | OpenApiPropType::Number) {
+            if let Some(min) = p.min {
+                out.push_str(&format!("          minimum: {}\n", min));
+            }
+            if let Some(max) = p.max {
+                out.push_str(&format!("          maximum: {}\n", max));
+            }
+        }
+        if !p.enum_values.is_empty() {
+            out.push_str("          enum:\n");
+            for e in &p.enum_values {
+                let v = e.trim();
+                if !v.is_empty() {
+                    out.push_str(&format!("            - {}\n", v));
+                }
+            }
+        }
+    }
+    out
+}
+
+pub(crate) fn openapi_prop_type_str(t: OpenApiPropType) -> &'static str {
+    match t {
+        OpenApiPropType::String => "string",
+        OpenApiPropType::Integer => "integer",
+        OpenApiPropType::Number => "number",
+        OpenApiPropType::Boolean => "boolean",
+    }
+}
+
+fn openapi_string_format_str(f: OpenApiStringFormat) -> Option<&'static str> {
+    match f {
+        OpenApiStringFormat::None => None,
+        OpenApiStringFormat::Email => Some("email"),
+        OpenApiStringFormat::Password => Some("password"),
+        OpenApiStringFormat::Uri => Some("uri"),
+    }
+}
+
+fn openapi_method_str(m: OpenApiMethod) -> &'static str {
+    match m {
+        OpenApiMethod::Get => "get",
+        OpenApiMethod::Post => "post",
+        OpenApiMethod::Put => "put",
+        OpenApiMethod::Patch => "patch",
+        OpenApiMethod::Delete => "delete",
+    }
+}
+
+fn render_openapi_body_schema(body: &OpenApiBody, indent: &str) -> String {
+    match body {
+        OpenApiBody::None => format!("{indent}type: object\n"),
+        OpenApiBody::String => format!("{indent}type: string\n"),
+        OpenApiBody::Integer => format!("{indent}type: integer\n"),
+        OpenApiBody::Number => format!("{indent}type: number\n"),
+        OpenApiBody::Boolean => format!("{indent}type: boolean\n"),
+        OpenApiBody::SchemaRef(name) => {
+            format!(
+                "{indent}$ref: \"#/components/schemas/{}\"\n",
+                yaml_escape(name)
+            )
+        }
+    }
+}
+
+pub(crate) fn render_openapi_preview(ed: &OpenApiEditorState) -> String {
+    render_openapi_contract(
+        &ed.title,
+        &ed.version,
+        &ed.base_url,
+        &ed.endpoints,
+        &ed.schemas,
+    )
+}
+
+pub(crate) fn render_openapi_footer(ed: &OpenApiEditorState) -> String {
+    match &ed.mode {
+        OpenApiEditorMode::Browse => {
+            let Some(ep) = ed.endpoints.get(ed.endpoint_cursor) else {
+                return "No endpoints. Press `n` to add one.".into();
+            };
+            format!(
+                "Selected: {} {}\nreq: {} {}\nresp: {} {} {}\n(edit: u path, m method, s status, c content-type, r req body, p resp body)",
+                openapi_method_str(ep.method).to_uppercase(),
+                ep.path,
+                ep.request_content_type,
+                render_openapi_body_label(&ep.request_body),
+                ep.response_status,
+                ep.response_content_type,
+                render_openapi_body_label(&ep.response_body),
+            )
+        }
+        OpenApiEditorMode::Schemas => {
+            let Some(s) = ed.schemas.get(ed.schema_cursor) else {
+                return "Schemas: none. Press `n` to add one. (g toggles back to endpoints)".into();
+            };
+            let prop = s.properties.get(ed.prop_cursor).map(|p| {
+                format!(
+                    "prop: {}{} type={} nullable={} fmt={}",
+                    p.name,
+                    if p.required { " *" } else { "" },
+                    openapi_prop_type_str(p.kind),
+                    if p.nullable { "true" } else { "false" },
+                    openapi_string_format_str(p.format).unwrap_or("-")
+                )
+            });
+            format!(
+                "Schema: {} (props: {})\n{}\n(keys: Tab schema · Up/Down prop · p add prop · x del prop · Space required · t type · f format · a nullable · / pattern · e enum · i/k min/max)",
+                s.name,
+                s.properties.len(),
+                prop.unwrap_or_else(|| "no properties".into())
+            )
+        }
+        OpenApiEditorMode::AddEndpoint => "Press Enter to create a new endpoint.".into(),
+        OpenApiEditorMode::AddSchema { input } => {
+            format!("New schema name:\n{input}\n(Enter to create)")
+        }
+        OpenApiEditorMode::RenameSchema { input } => {
+            format!("Rename schema:\n{input}\n(Enter to confirm)")
+        }
+        OpenApiEditorMode::AddProp { input } => {
+            format!("New property name:\n{input}\n(Enter to add)")
+        }
+        OpenApiEditorMode::RenameProp { input } => {
+            format!("Rename property:\n{input}\n(Enter to confirm)")
+        }
+        OpenApiEditorMode::EditPropPattern { input } => {
+            format!("Pattern (regex):\n{input}\n(Enter to set)")
+        }
+        OpenApiEditorMode::EditPropEnum { input } => {
+            format!("Enum values (comma-separated):\n{input}\n(Enter to set)")
+        }
+        OpenApiEditorMode::EditPropMin { input } => {
+            format!("Min (minLength/minimum):\n{input}\n(Enter to set, blank clears)")
+        }
+        OpenApiEditorMode::EditPropMax { input } => {
+            format!("Max (maxLength/maximum):\n{input}\n(Enter to set, blank clears)")
+        }
+        OpenApiEditorMode::EditPath { input } => format!("Edit path:\n{input}\n(Enter to confirm)"),
+        OpenApiEditorMode::EditTitle { input } => {
+            format!("Edit API title:\n{input}\n(Enter to confirm)")
+        }
+        OpenApiEditorMode::EditVersion { input } => {
+            format!("Edit version (e.g. 1.0.0):\n{input}\n(Enter to confirm)")
+        }
+        OpenApiEditorMode::EditBaseUrl { input } => {
+            format!("Edit base URL:\n{input}\n(Enter to confirm)")
+        }
+    }
+}
+
+fn render_openapi_body_label(body: &OpenApiBody) -> String {
+    match body {
+        OpenApiBody::None => "none".into(),
+        OpenApiBody::String => "string".into(),
+        OpenApiBody::Integer => "integer".into(),
+        OpenApiBody::Number => "number".into(),
+        OpenApiBody::Boolean => "boolean".into(),
+        OpenApiBody::SchemaRef(name) => format!("$ref({name})"),
+    }
+}
+
 fn render_code_blocks(blocks: &[CodeBlock]) -> String {
     let mut out = String::new();
     for (i, b) in blocks.iter().enumerate() {
@@ -2212,7 +3420,10 @@ fn parse_gherkin_features(src: &str) -> Vec<GherkinFeature> {
             let mut bg: Vec<String> = Vec::new();
             while i < lines.len() {
                 let tt = lines[i].trim();
-                if tt.starts_with("Scenario:") || tt.starts_with("Scenario Outline:") || tt.starts_with("Feature:") {
+                if tt.starts_with("Scenario:")
+                    || tt.starts_with("Scenario Outline:")
+                    || tt.starts_with("Feature:")
+                {
                     break;
                 }
                 if !tt.is_empty() {
@@ -2238,7 +3449,10 @@ fn parse_gherkin_features(src: &str) -> Vec<GherkinFeature> {
             let mut step_lines: Vec<String> = Vec::new();
             while i < lines.len() {
                 let tt = lines[i].trim();
-                if tt.starts_with("Scenario:") || tt.starts_with("Scenario Outline:") || tt.starts_with("Feature:") {
+                if tt.starts_with("Scenario:")
+                    || tt.starts_with("Scenario Outline:")
+                    || tt.starts_with("Feature:")
+                {
                     break;
                 }
                 if tt.starts_with('@') {
@@ -2254,7 +3468,11 @@ fn parse_gherkin_features(src: &str) -> Vec<GherkinFeature> {
             if let Some(f) = current.as_mut() {
                 let idx = f.scenarios.len() + 1;
                 f.scenarios.push(GherkinScenario {
-                    name: if name.is_empty() { format!("Scenario {idx}") } else { name },
+                    name: if name.is_empty() {
+                        format!("Scenario {idx}")
+                    } else {
+                        name
+                    },
                     steps: step_lines.join("\n"),
                 });
             }
@@ -2362,10 +3580,7 @@ fn validate_gherkin_steps(src: &str) -> Result<(), String> {
             continue;
         }
 
-        let (kw, _rest) = t
-            .split_once(' ')
-            .map(|(a, b)| (a, b))
-            .unwrap_or((t, ""));
+        let (kw, _rest) = t.split_once(' ').map(|(a, b)| (a, b)).unwrap_or((t, ""));
 
         match kw {
             "Given" => {
@@ -2374,14 +3589,18 @@ fn validate_gherkin_steps(src: &str) -> Result<(), String> {
             }
             "When" => {
                 if !has_given {
-                    return Err(format!("steps line {line_no}: `When` cannot appear before `Given`"));
+                    return Err(format!(
+                        "steps line {line_no}: `When` cannot appear before `Given`"
+                    ));
                 }
                 has_when = true;
                 seen = Seen::When;
             }
             "Then" => {
                 if !has_when {
-                    return Err(format!("steps line {line_no}: `Then` cannot appear before `When`"));
+                    return Err(format!(
+                        "steps line {line_no}: `Then` cannot appear before `When`"
+                    ));
                 }
                 has_then = true;
                 seen = Seen::Then;
@@ -3017,7 +4236,11 @@ fn form_field_for_template_field(field: &lattice_core::fields::Field) -> FormFie
     let label = format_field_label(field);
     let multiline = matches!(
         field.kind,
-        FieldKind::Textarea | FieldKind::SequenceGram | FieldKind::CodeBlocks | FieldKind::Gherkin
+        FieldKind::Textarea
+            | FieldKind::SequenceGram
+            | FieldKind::CodeBlocks
+            | FieldKind::Gherkin
+            | FieldKind::OpenApi
     );
     let value = match &field.default {
         Some(serde_json::Value::String(s)) => s.clone(),
@@ -3051,6 +4274,7 @@ fn format_field_label(field: &lattice_core::fields::Field) -> String {
         FieldKind::SequenceGram => "sequence-gram",
         FieldKind::CodeBlocks => "code-blocks",
         FieldKind::Gherkin => "gherkin",
+        FieldKind::OpenApi => "openapi",
     };
     format!("{} [{}]", field.label, kind_label)
 }

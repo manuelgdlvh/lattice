@@ -62,6 +62,18 @@ pub(crate) fn default_templates(now: Timestamp) -> Vec<Template> {
             validation: Validation::default(),
             options: FieldOptions { options: vec![] },
         },
+        Field {
+            id: "api_contract".into(),
+            kind: FieldKind::OpenApi,
+            label: "API Contract (OpenAPI)".into(),
+            help: Some("Define endpoints with select/cycle inputs (F6 opens the editor).".into()),
+            placeholder: None,
+            required: false,
+            default: None,
+            show_if: None,
+            validation: Validation::default(),
+            options: FieldOptions { options: vec![] },
+        },
     ];
     t.prompt = PromptSpec {
         template: r#"# Role
@@ -86,6 +98,11 @@ You are an autonomous senior engineer working on this repository.
 {% if task.fields.test_cases is defined and task.fields.test_cases %}
 # Test cases (Gherkin)
 {{ task.fields.test_cases | gherkin_block }}
+{% endif %}
+
+{% if task.fields.api_contract is defined and task.fields.api_contract %}
+# API contract (OpenAPI)
+{{ task.fields.api_contract | code_block("yaml") }}
 {% endif %}
 
 # Working mode (autonomous)

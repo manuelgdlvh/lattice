@@ -48,8 +48,228 @@ pub fn render(frame: &mut Frame<'_>, model: &Model) {
     if let Some(ed) = &model.gherkin_editor {
         render_gherkin_editor(frame, area, ed);
     }
+    if let Some(ed) = &model.openapi_editor {
+        render_openapi_editor(frame, area, ed);
+    }
     if let Some(confirm) = &model.confirm {
         render_confirm(frame, area, confirm);
+    }
+}
+
+fn render_openapi_editor(frame: &mut Frame<'_>, area: Rect, ed: &crate::model::OpenApiEditorState) {
+    let width = ((area.width as u32) * 86 / 100)
+        .try_into()
+        .unwrap_or(area.width)
+        .clamp(78, 220);
+    let height = area.height.saturating_sub(4).clamp(18, 36);
+    let left = (area.width.saturating_sub(width)) / 2 + area.x;
+    let top = (area.height.saturating_sub(height)) / 2 + area.y;
+    let rect = Rect {
+        x: left,
+        y: top,
+        width,
+        height,
+    };
+    frame.render_widget(Clear, rect);
+
+    let footer_h = match ed.mode {
+        crate::model::OpenApiEditorMode::Browse => 3,
+        _ => 4,
+    };
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(Span::styled(
+            " openapi editor ",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ))
+        .title_bottom(Line::from(vec![
+            Span::styled("F2", Style::default().fg(Color::Green)),
+            Span::raw(" save  "),
+            Span::styled("Esc", Style::default().fg(Color::Yellow)),
+            Span::raw(" cancel  "),
+            Span::styled("Tab", Style::default().fg(Color::Cyan)),
+            Span::raw(" next  "),
+            Span::styled("g", Style::default().fg(Color::Cyan)),
+            Span::raw(" toggle endpoints/schemas  "),
+            Span::styled("n", Style::default().fg(Color::Cyan)),
+            Span::raw(" new  "),
+            Span::styled("D", Style::default().fg(Color::Cyan)),
+            Span::raw(" delete  "),
+            Span::styled("m", Style::default().fg(Color::Cyan)),
+            Span::raw(" method  "),
+            Span::styled("s", Style::default().fg(Color::Cyan)),
+            Span::raw(" status  "),
+            Span::styled("c", Style::default().fg(Color::Cyan)),
+            Span::raw(" content-type  "),
+            Span::styled("r/p", Style::default().fg(Color::Cyan)),
+            Span::raw(" req/resp body shape  "),
+            Span::styled("u", Style::default().fg(Color::Cyan)),
+            Span::raw(" path  "),
+            Span::styled("t/v/b", Style::default().fg(Color::Cyan)),
+            Span::raw(" title/version/base-url"),
+        ]));
+
+    let inner = block.inner(rect);
+    frame.render_widget(block, rect);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(4),
+            Constraint::Min(0),
+            Constraint::Length(footer_h),
+        ])
+        .split(inner);
+
+    // Header
+    let header = Paragraph::new(vec![
+        Line::from(vec![
+            Span::styled("title: ", Style::default().fg(Color::DarkGray)),
+            Span::raw(&ed.title),
+            Span::styled("   version: ", Style::default().fg(Color::DarkGray)),
+            Span::raw(&ed.version),
+        ]),
+        Line::from(vec![
+            Span::styled("base: ", Style::default().fg(Color::DarkGray)),
+            Span::raw(&ed.base_url),
+        ]),
+    ])
+    .wrap(Wrap { trim: true });
+    frame.render_widget(header, chunks[0]);
+
+    // Left list + right preview
+    let split = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Length(56), Constraint::Min(0)])
+        .split(chunks[1]);
+
+    if matches!(ed.mode, crate::model::OpenApiEditorMode::Schemas) {
+        let cols = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Length(28), Constraint::Length(28)])
+            .split(split[0]);
+
+        let schema_items: Vec<ListItem> = ed
+            .schemas
+            .iter()
+            .enumerate()
+            .map(|(i, s)| {
+                let sel = i == ed.schema_cursor;
+                let style = if sel {
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                };
+                ListItem::new(Line::from(Span::styled(s.name.clone(), style)))
+            })
+            .collect();
+        frame.render_widget(
+            List::new(schema_items)
+                .block(Block::default().borders(Borders::ALL).title(" schemas ")),
+            cols[0],
+        );
+
+        let props: Vec<ListItem> = ed
+            .schemas
+            .get(ed.schema_cursor)
+            .map(|s| {
+                s.properties
+                    .iter()
+                    .enumerate()
+                    .map(|(i, p)| {
+                        let sel = i == ed.prop_cursor;
+                        let style = if sel {
+                            Style::default()
+                                .fg(Color::Yellow)
+                                .add_modifier(Modifier::BOLD)
+                        } else {
+                            Style::default()
+                        };
+                        ListItem::new(Line::from(Span::styled(
+                            format!(
+                                "{}{} ({})",
+                                p.name,
+                                if p.required { " *" } else { "" },
+                                crate::model::openapi_prop_type_str(p.kind)
+                            ),
+                            style,
+                        )))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        frame.render_widget(
+            List::new(props).block(Block::default().borders(Borders::ALL).title(" properties ")),
+            cols[1],
+        );
+    } else {
+        let items: Vec<ListItem> = ed
+            .endpoints
+            .iter()
+            .enumerate()
+            .map(|(i, ep)| {
+                let sel = i == ed.endpoint_cursor;
+                let style = if sel {
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                };
+                ListItem::new(Line::from(Span::styled(
+                    format!(
+                        "{} {} {}",
+                        openapi_method(ep.method),
+                        ep.path,
+                        ep.response_status
+                    ),
+                    style,
+                )))
+            })
+            .collect();
+        frame.render_widget(
+            List::new(items).block(Block::default().borders(Borders::ALL).title(" endpoints ")),
+            split[0],
+        );
+    }
+
+    let preview = crate::model::render_openapi_preview(ed);
+    let scroll_y: u16 = ed.preview_scroll.try_into().unwrap_or(u16::MAX);
+    frame.render_widget(
+        Paragraph::new(preview)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" preview (OpenAPI YAML) "),
+            )
+            .wrap(Wrap { trim: false })
+            .scroll((scroll_y, 0)),
+        split[1],
+    );
+
+    // Footer editor
+    let footer_block = Block::default().borders(Borders::ALL).title(" edit ");
+    let footer_inner = footer_block.inner(chunks[2]);
+    frame.render_widget(footer_block, chunks[2]);
+    let footer_text = crate::model::render_openapi_footer(ed);
+    frame.render_widget(
+        Paragraph::new(footer_text).wrap(Wrap { trim: false }),
+        footer_inner,
+    );
+}
+
+fn openapi_method(m: crate::model::OpenApiMethod) -> &'static str {
+    match m {
+        crate::model::OpenApiMethod::Get => "GET",
+        crate::model::OpenApiMethod::Post => "POST",
+        crate::model::OpenApiMethod::Put => "PUT",
+        crate::model::OpenApiMethod::Patch => "PATCH",
+        crate::model::OpenApiMethod::Delete => "DELETE",
     }
 }
 
@@ -145,7 +365,10 @@ fn render_gherkin_editor(frame: &mut Frame<'_>, area: Rect, ed: &crate::model::G
             Style::default().fg(Color::DarkGray),
         ),
     ]);
-    frame.render_widget(Paragraph::new(vec![title_line]).wrap(Wrap { trim: false }), chunks[0]);
+    frame.render_widget(
+        Paragraph::new(vec![title_line]).wrap(Wrap { trim: false }),
+        chunks[0],
+    );
 
     let mid = Layout::default()
         .direction(Direction::Horizontal)
@@ -153,7 +376,8 @@ fn render_gherkin_editor(frame: &mut Frame<'_>, area: Rect, ed: &crate::model::G
         .split(chunks[1]);
 
     let preview = crate::model::render_gherkin_features(&ed.features);
-    let preview_lines: Vec<Line<'static>> = preview.lines().map(|l| Line::from(l.to_string())).collect();
+    let preview_lines: Vec<Line<'static>> =
+        preview.lines().map(|l| Line::from(l.to_string())).collect();
     frame.render_widget(
         Paragraph::new(preview_lines)
             .wrap(Wrap { trim: false })
@@ -169,7 +393,11 @@ fn render_gherkin_editor(frame: &mut Frame<'_>, area: Rect, ed: &crate::model::G
                 .iter()
                 .enumerate()
                 .map(|(i, s)| {
-                    let marker = if i == ed.scenario_cursor { "▶ " } else { "  " };
+                    let marker = if i == ed.scenario_cursor {
+                        "▶ "
+                    } else {
+                        "  "
+                    };
                     ListItem::new(Line::from(vec![
                         Span::styled(marker, Style::default().fg(Color::Cyan)),
                         Span::styled(s.name.clone(), Style::default()),
@@ -217,17 +445,22 @@ fn render_gherkin_editor(frame: &mut Frame<'_>, area: Rect, ed: &crate::model::G
                     Style::default().fg(Color::DarkGray),
                 ))],
                 crate::model::GherkinEditorMode::AddScenario { input } => vec![Line::from(vec![
-                    Span::styled("New scenario: ", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::styled(
+                        "New scenario: ",
+                        Style::default().add_modifier(Modifier::BOLD),
+                    ),
                     Span::raw(input.clone()),
                     Span::styled("▌", Style::default().fg(Color::Cyan)),
                     Span::styled("  Enter=create", Style::default().fg(Color::DarkGray)),
                 ])],
-                crate::model::GherkinEditorMode::RenameScenario { input } => vec![Line::from(vec![
-                    Span::styled("Rename: ", Style::default().add_modifier(Modifier::BOLD)),
-                    Span::raw(input.clone()),
-                    Span::styled("▌", Style::default().fg(Color::Cyan)),
-                    Span::styled("  Enter=save", Style::default().fg(Color::DarkGray)),
-                ])],
+                crate::model::GherkinEditorMode::RenameScenario { input } => {
+                    vec![Line::from(vec![
+                        Span::styled("Rename: ", Style::default().add_modifier(Modifier::BOLD)),
+                        Span::raw(input.clone()),
+                        Span::styled("▌", Style::default().fg(Color::Cyan)),
+                        Span::styled("  Enter=save", Style::default().fg(Color::DarkGray)),
+                    ])]
+                }
                 crate::model::GherkinEditorMode::EditFeature { input } => vec![Line::from(vec![
                     Span::styled("Feature: ", Style::default().add_modifier(Modifier::BOLD)),
                     Span::raw(input.clone()),
@@ -235,13 +468,19 @@ fn render_gherkin_editor(frame: &mut Frame<'_>, area: Rect, ed: &crate::model::G
                     Span::styled("  Enter=save", Style::default().fg(Color::DarkGray)),
                 ])],
                 crate::model::GherkinEditorMode::AddFeature { input } => vec![Line::from(vec![
-                    Span::styled("New feature: ", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::styled(
+                        "New feature: ",
+                        Style::default().add_modifier(Modifier::BOLD),
+                    ),
                     Span::raw(input.clone()),
                     Span::styled("▌", Style::default().fg(Color::Cyan)),
                     Span::styled("  Enter=create", Style::default().fg(Color::DarkGray)),
                 ])],
                 crate::model::GherkinEditorMode::RenameFeature { input } => vec![Line::from(vec![
-                    Span::styled("Rename feature: ", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::styled(
+                        "Rename feature: ",
+                        Style::default().add_modifier(Modifier::BOLD),
+                    ),
                     Span::raw(input.clone()),
                     Span::styled("▌", Style::default().fg(Color::Cyan)),
                     Span::styled("  Enter=save", Style::default().fg(Color::DarkGray)),
@@ -334,7 +573,10 @@ fn render_code_editor(frame: &mut Frame<'_>, area: Rect, ed: &crate::model::Code
     } else {
         Line::from("No blocks.")
     };
-    frame.render_widget(Paragraph::new(vec![title_line]).wrap(Wrap { trim: false }), chunks[0]);
+    frame.render_widget(
+        Paragraph::new(vec![title_line]).wrap(Wrap { trim: false }),
+        chunks[0],
+    );
 
     let mid = Layout::default()
         .direction(Direction::Horizontal)
@@ -350,7 +592,10 @@ fn render_code_editor(frame: &mut Frame<'_>, area: Rect, ed: &crate::model::Code
         for l in b.code.lines() {
             v.push(Line::from(l.to_string()));
         }
-        v.push(Line::from(Span::styled("```", Style::default().fg(Color::DarkGray))));
+        v.push(Line::from(Span::styled(
+            "```",
+            Style::default().fg(Color::DarkGray),
+        )));
         if v.is_empty() {
             vec![Line::from("Empty.")]
         } else {
@@ -414,13 +659,19 @@ fn render_code_editor(frame: &mut Frame<'_>, area: Rect, ed: &crate::model::Code
                     Style::default().fg(Color::DarkGray),
                 ))],
                 crate::model::CodeEditorMode::AddBlock { input } => vec![Line::from(vec![
-                    Span::styled("New block name: ", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::styled(
+                        "New block name: ",
+                        Style::default().add_modifier(Modifier::BOLD),
+                    ),
                     Span::raw(input.clone()),
                     Span::styled("▌", Style::default().fg(Color::Cyan)),
                     Span::styled("  Enter=create", Style::default().fg(Color::DarkGray)),
                 ])],
                 crate::model::CodeEditorMode::RenameBlock { input } => vec![Line::from(vec![
-                    Span::styled("Rename block: ", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::styled(
+                        "Rename block: ",
+                        Style::default().add_modifier(Modifier::BOLD),
+                    ),
                     Span::raw(input.clone()),
                     Span::styled("▌", Style::default().fg(Color::Cyan)),
                     Span::styled("  Enter=save", Style::default().fg(Color::DarkGray)),
@@ -1099,15 +1350,24 @@ fn render_form(frame: &mut Frame<'_>, area: Rect, form: &crate::model::FormState
         } else {
             Style::default().fg(Color::DarkGray)
         };
-        let is_seq = matches!(field.kind, Some(lattice_core::fields::FieldKind::SequenceGram));
-        let is_code = matches!(field.kind, Some(lattice_core::fields::FieldKind::CodeBlocks));
+        let is_seq = matches!(
+            field.kind,
+            Some(lattice_core::fields::FieldKind::SequenceGram)
+        );
+        let is_code = matches!(
+            field.kind,
+            Some(lattice_core::fields::FieldKind::CodeBlocks)
+        );
         let is_gherkin = matches!(field.kind, Some(lattice_core::fields::FieldKind::Gherkin));
+        let is_openapi = matches!(field.kind, Some(lattice_core::fields::FieldKind::OpenApi));
         let editor_badge = if is_seq {
             "  [F3 open editor]"
         } else if is_code {
             "  [F4 open editor]"
         } else if is_gherkin {
             "  [F5 open editor]"
+        } else if is_openapi {
+            "  [F6 open editor]"
         } else {
             ""
         };
@@ -1133,6 +1393,12 @@ fn render_form(frame: &mut Frame<'_>, area: Rect, form: &crate::model::FormState
         } else if is_gherkin {
             if field.value.trim().is_empty() {
                 "<gherkin test cases — press F5 to edit>".to_string()
+            } else {
+                field.value.clone()
+            }
+        } else if is_openapi {
+            if field.value.trim().is_empty() {
+                "<openapi contract — press F6 to edit>".to_string()
             } else {
                 field.value.clone()
             }

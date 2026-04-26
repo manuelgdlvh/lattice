@@ -82,7 +82,6 @@ impl FileStore {
         out.sort();
         Ok(out)
     }
-
 }
 
 /// Run a blocking closure on the tokio blocking pool. Flattens the join

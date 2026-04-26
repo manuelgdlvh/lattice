@@ -72,7 +72,11 @@ pub fn validate_field(field: &Field, value: Option<&Value>) -> Vec<FieldError> {
     };
 
     match field.kind {
-        FieldKind::Textarea | FieldKind::SequenceGram | FieldKind::CodeBlocks | FieldKind::Gherkin => {
+        FieldKind::Textarea
+        | FieldKind::SequenceGram
+        | FieldKind::CodeBlocks
+        | FieldKind::Gherkin
+        | FieldKind::OpenApi => {
             validate_string(&field.id, &field.validation, v, &mut out);
         }
         FieldKind::Select => validate_select(field, v, &mut out),
