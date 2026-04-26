@@ -83,7 +83,6 @@ impl FileStore {
         Ok(out)
     }
 
-    // (queues helper removed)
 }
 
 /// Run a blocking closure on the tokio blocking pool. Flattens the join
@@ -210,9 +209,6 @@ impl Tasks for FileStore {
         blocking(dir.clone(), move || remove_dir_if_exists(&dir)).await
     }
 }
-
-// -------- Runs/Queues -------------------------------------------------
-// Agent execution has been removed, so FileStore no longer persists runs/queues.
 
 // -------- Settings ---------------------------------------------------
 

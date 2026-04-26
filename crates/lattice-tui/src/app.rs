@@ -137,9 +137,7 @@ impl App {
                 AppEvent::Terminal(_) => {}
                 AppEvent::Tick => {
                     // Drop stale info/warn toasts after a few seconds.
-                    // Error toasts (which may carry stderr tails) stay
-                    // pinned until the user dismisses them so the
-                    // failure details are never lost to a timeout.
+                    // Error toasts stay pinned until dismissed.
                     if !model.toasts.is_empty() && last_tick.elapsed() > Duration::from_secs(4) {
                         model
                             .toasts
@@ -414,10 +412,8 @@ impl App {
                     }
                 };
 
-                // These two sub-steps used to be silent `warn!`s; a TUI
-                // user would have no way to see that a save partially
-                // failed. Surface them as warn toasts so the failure is
-                // actually visible, but don't abort the whole save.
+                // Surface partial save failures as warn toasts without
+                // aborting the whole save.
                 if let Err(e) = self.ctx.tasks.save_snapshot(&task, &tpl).await {
                     warn!("save_snapshot: {e}");
                     model.toasts.push(crate::toast::Toast::new(

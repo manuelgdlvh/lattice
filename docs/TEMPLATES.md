@@ -74,7 +74,7 @@ fields = ["module_path"]
 title = "Intent"
 fields = ["goals", "perf_budget_ms", "constraints"]
 
-# ---- Prompt: the MiniJinja template rendered at task dispatch. ----
+# ---- Prompt: the MiniJinja template rendered from a task. ----
 [prompt]
 template = """
 {% block context %}
@@ -83,7 +83,6 @@ You are working on a Rust codebase.
 Follow existing conventions. Never break the public API.
 Run `cargo fmt` and `cargo clippy` before declaring completion.
 
-Project: `{{ project.name }}` at `{{ project.path }}`
 Current branch: `{{ derived.current_branch }}`
 
 Repository snapshot:
@@ -130,14 +129,14 @@ entry.
 
 ---
 
-## 2. Field kinds (v0.1)
+## 2. Field kinds
 
 | Kind | JSON value shape | Notes |
 |---|---|---|
 | `textarea` | `"multi\nline"` | Multi-line. `placeholder` supported. |
 | `select` | `"option-id"` | `options: [..]` required. |
 | `multiselect` | `["a", "b"]` | `options: [..]` required. |
-| `sequence-gram` | `"string"` | Sequence diagram text that can be rendered as Mermaid `sequenceDiagram` via the `sequence_gram` prompt filter. |
+| `sequence-gram` | `"string"` | Sequence diagram text. The TUI provides an F3 editor; per-edge notes render as Mermaid `Note over ...` lines. |
 
 ### 2.1 Common field properties
 
@@ -157,7 +156,7 @@ validation    table              # kind-dependent; see §3
 
 - `select` / `multiselect`: `options = ["a", "b", "c"]` **or**
   `options = [{ id = "a", label = "Alpha" }]`.
-- `sequence-gram`: author tuigram/Mermaid body text; render in prompts with `{{ task.fields.<id> | sequence_gram }}`.
+- `sequence-gram`: author diagrams in the built-in editor (F3). Render in prompts with `{{ task.fields.<id> | sequence_gram }}` (or render the stored field directly).
 
 ---
 
@@ -175,7 +174,7 @@ allowed_values  list  (any)                                — whitelist
 ```
 
 Validation errors appear inline next to the field and in a summary panel
-next to the "Dispatch" button. A task cannot be dispatched while any
+next to the save action. A task cannot be saved while any
 required field is invalid.
 
 ---
@@ -183,7 +182,7 @@ required field is invalid.
 ## 4. Conditional fields (`show_if`)
 
 `show_if` is a MiniJinja **boolean expression** evaluated against
-`task.fields.*` plus the `derived.*` and `project.*` scopes. If the
+`task.fields.*` plus the `derived.*` scope. If the
 expression is false, the field is:
 
 - **Hidden** in the UI.
@@ -208,11 +207,11 @@ scopes. Arbitrary function calls are rejected at template-parse time.
 ## 5. Derived values
 
 `[derived]` declares computed inputs that are **resolved at task creation
-time** (not dispatch time) and stored in the task's `derived` map.
+time** and stored in the task's `derived` map.
 Freezing happens at task creation so re-renders / previews are
 deterministic.
 
-Allowed providers (v0.1, allow-listed):
+Allowed providers (allow-listed):
 
 | Provider | Shape | Result |
 |---|---|---|
@@ -228,7 +227,7 @@ Common properties:
 - `cache_ttl_seconds = 0` (default) — re-resolved on every task creation.
 
 **Never supported:** raw shell strings, user-editable shell commands at
-dispatch, interactive pagers. All enforced at manifest-parse time.
+render time, interactive pagers. All enforced at template-parse time.
 
 ---
 
@@ -239,7 +238,7 @@ dispatch, interactive pagers. All enforced at manifest-parse time.
 ```
 derived values resolved at task-create time
               +
-field values validated and frozen at task-queue time
+field values validated and frozen at task-save time
               +
 template frozen on task.template_snapshot.toml
                        │
@@ -247,14 +246,13 @@ template frozen on task.template_snapshot.toml
           MiniJinja render → Markdown string
                        │
                        ▼
-         prompt.md (immutable, sent verbatim to agent)
+         prompt.md (saved Markdown prompt)
 ```
 
 ### 6.2 MiniJinja scope
 
 | Name | Description |
 |---|---|
-| `project.{id,name,path,description}` | Target project. |
 | `task.id`, `task.name`, `task.created_at` | Task metadata. |
 | `task.fields.<id>` | User-provided field values. |
 | `derived.<name>` | Resolved derived values. |
@@ -328,7 +326,6 @@ template = """
 You are fixing a specific, reproducible bug. Keep the diff minimal and
 write a failing test first if one does not already exist.
 
-Project: `{{ project.name }}` at `{{ project.path }}`
 Recent log:
 ```
 {{ derived.recent_log }}
@@ -418,7 +415,7 @@ template = """
 ## Context
 Ship a feature end-to-end. You are expected to reason about
 observability, failure modes, and backward compatibility.
-Project: `{{ project.name }}` at `{{ project.path }}`.
+ 
 
 ## Feature
 Title: **{{ task.fields.title }}**
@@ -472,7 +469,6 @@ Refactor guided by a container diagram describing the intended shape
 after the change. Preserve public APIs unless the diagram explicitly
 removes a container.
 
-Project: `{{ project.name }}` at `{{ project.path }}`
 Target module: `{{ task.fields.module_path }}`
 
 ## Target shape

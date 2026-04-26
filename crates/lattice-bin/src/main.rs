@@ -1,7 +1,6 @@
 //! `lattice` — task-first schema-driven AI dev orchestrator.
 //!
 //! This binary wires the store and TUI into a running app.
-//! Agent execution has been removed.
 
 #![deny(unsafe_code)]
 

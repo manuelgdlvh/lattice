@@ -1,7 +1,6 @@
 # ARCHITECTURE
 
-Technical architecture for lattice. Targets v0.1 but calls out seams for
-v0.2–v1.0.
+Technical architecture for lattice.
 
 ---
 
@@ -12,14 +11,14 @@ v0.2–v1.0.
 | TUI | `ratatui` + `crossterm` | De-facto standard; custom-widget friendly. |
 | Async runtime | `tokio` (multi-thread) | Process supervision, file I/O, watchers. |
 | Templating | `minijinja` | Jinja2-compatible, actively maintained, Rust-native. |
-| Serialization | `serde` + `toml` (author-facing) + `serde_json` (machine-facing) | Human-readable for templates, JSON where we need round-tripping with agents. |
+| Serialization | `serde` + `toml` (author-facing) + `serde_json` (machine-facing) | TOML for templates/tasks; JSON for field values and derived values. |
 | Logging | `tracing` + `tracing-appender` | Structured logs to rotating file. |
 | Errors | `thiserror` (library), `anyhow` (binary boundary) | Standard Rust split. |
 | File watching | `notify` | Reliable cross-platform watchers. |
 | Async channels | `tokio::sync::{mpsc, broadcast, watch}` | No lock contention in hot paths. |
 | Keybindings | custom | Arrow-first; vim is out. |
 | Testing | `insta` for snapshots, `rstest` for parametric, `tokio-test` | Snapshot test prompts & UI renders. |
-| Process | `tokio::process::Command` | With `kill_on_drop(true)` in v0.1. |
+| Process | `tokio::process::Command` | Process APIs if needed. |
 | Config dirs | `directories` crate | XDG-compliant. |
 | IDs | `uuid` v7 (time-ordered) | Sortable, no central registry needed. |
 
@@ -33,12 +32,12 @@ lattice is a single binary plus library crates in a Cargo workspace. This
 enforces the extensibility seams and keeps tests fast.
 
 ```
-structui/                       # workspace root
+lattice/                        # workspace root
 ├── Cargo.toml                  # [workspace] manifest
 ├── crates/
 │   ├── lattice-core/         # domain model + pure logic (no I/O)
 │   │   └── src/
-│   │       ├── entities/       # Project, Template, Task, Run, Field, ...
+│   │       ├── entities/       # Template, Task, Settings, Field, ...
 │   │       ├── prompt/         # MiniJinja glue + renderer
 │   │       ├── validation/     # field validation rules
 │   │       ├── derive/         # allow-listed derived-value providers
@@ -50,13 +49,7 @@ structui/                       # workspace root
 │   │       ├── cache.rs        # LRU page cache
 │   │       ├── watcher.rs      # notify bridge
 │   │       └── atomic.rs       # tmp-fsync-rename helpers
-│   ├── lattice-agents/       # agent manifests, detection, spawn, supervise
-│   │   └── src/
-│   │       ├── manifest.rs     # schema + loader
-│   │       ├── detect.rs       # PATH probing
-│   │       ├── runner.rs       # spawn + tee + lifecycle
-│   │       └── builtin/        # shipped manifests (cursor-agent.toml)
-│   # lattice-components/     # removed (interactive components out of scope)
+│   # lattice-components/     # out of scope
 │   ├── lattice-tui/          # ratatui views, widgets, keymap
 │   │   └── src/
 │   │       ├── app.rs          # Model/Msg/update
@@ -71,7 +64,7 @@ structui/                       # workspace root
 
 `lattice-core` has **zero** I/O dependencies — it is pure Rust. Everything
 else depends on it. This makes unit testing trivial and keeps the domain
-portable (e.g., future WASM plugin host).
+portable (e.g., future alternate frontends).
 
 ---
 
@@ -102,51 +95,8 @@ new `Msg`s back into the loop via an `mpsc` channel.
 - Deterministic tests: feed a `Vec<Msg>` into `update`, assert on `Model`.
 - No UI thread / logic thread race conditions.
 
-**`Model` sketch:**
-
-```rust
-pub struct Model {
-    pub screen: Screen,
-    pub nav_focus: NavFocus,
-    pub projects: EntityList<Project>,
-    pub templates: EntityList<Template>,
-    pub tasks: EntityList<Task>,
-    pub runs: EntityList<Run>,
-    pub queues: HashMap<ProjectId, Queue>,
-    pub runtime: RuntimeView,
-    pub palette: Option<CommandPaletteState>,
-    pub toasts: VecDeque<Toast>,
-    pub settings: Settings,
-    pub agents: AgentCatalog,      // detected
-    pub draft_task: Option<TaskDraft>,
-    pub editor: Option<TemplateEditorState>,
-}
-
-pub enum Msg {
-    // input
-    Key(KeyEvent),
-    Resize(u16, u16),
-    Tick,
-
-    // async results
-    StoreLoaded(Result<StoreSnapshot, StoreError>),
-    AgentsDetected(Vec<DetectedAgent>),
-    RunStdout { run_id: RunId, line: String },
-    RunStderr { run_id: RunId, line: String },
-    RunExited { run_id: RunId, status: RunStatus },
-
-    // user intents (produced by screens)
-    Navigate(Screen),
-    CreateProject(ProjectDraft),
-    DeleteProject(ProjectId),
-    EditTemplate(TemplateId),
-    SaveTemplate(TemplateBody),
-    DispatchTask { task_id: TaskId, agent_id: AgentId },
-    KillRun(RunId),
-    ResumeQueue(ProjectId),
-    // ...
-}
-```
+The current build keeps the same Elm-style structure but only includes
+Templates/Tasks/Settings UI plus overlays (palette, forms, picker, toasts).
 
 ---
 
@@ -155,23 +105,12 @@ pub enum Msg {
 `Cmd` is an enum describing an intent; an executor translates each variant
 into an async task.
 
-```rust
-pub enum Cmd {
-    LoadStore,
-    SaveProject(Project),
-    DeleteProject(ProjectId),
-    SaveTemplate(Template),
-    // ...
-    SpawnRun(SpawnRequest),
-    KillRun(RunId),
-    WatchDataDir,
-    Detect Agents,
-}
-```
+The current build's side effects are store operations (list/load/save/delete)
+and filesystem watcher events.
 
 The executor:
 
-1. Owns the `Store` handle, agent runner, file watcher.
+1. Owns the `Store` handle and file watcher.
 2. Receives `Cmd` over an `mpsc::UnboundedSender<Cmd>`.
 3. For each `Cmd`, spawns a `tokio::task` that performs the work and sends
    one or more `Msg`s back through the UI-bound channel.
@@ -216,76 +155,18 @@ pub trait Store<T: Entity>: Send + Sync {
 
 ---
 
-## 6. Agents subsystem
-
-See `AGENTS.md` for the manifest spec. The subsystem:
-
-- On startup, loads built-in manifests (embedded via `include_str!`) plus
-  any user-level manifests under `$XDG_CONFIG_HOME/lattice/agents/*.toml`
-  (user overrides built-in by `id`).
-- Runs `detect` commands in parallel. Produces an `AgentCatalog`.
-- `Runner` accepts a `SpawnRequest`:
-
-```rust
-pub struct SpawnRequest {
-    pub run_id: RunId,
-    pub agent: AgentManifest,
-    pub project_dir: PathBuf,
-    pub prompt: String,          // frozen markdown
-    pub log_dir: PathBuf,        // where stdout.log / stderr.log go
-}
-```
-
-- Spawns the child per the manifest's prompt-delivery strategy.
-- Tees each line into:
-  - `stdout.log` / `stderr.log` files (append, line-buffered, fsync on exit).
-  - An `mpsc::Sender<RunEvent>` consumed by the Elm loop for tailing UI.
-- On exit, writes `exit.toml` with status + timestamps.
-
-v0.3 will swap `kill_on_drop(true)` for detached processes and PID files to
-enable reattach.
-
----
-
-## 7. Queue engine
-
-One actor (tokio task) per process, owning:
-
-- A `HashMap<ProjectId, ProjectQueue>`.
-- A global semaphore of size `settings.max_concurrent_agents`
-  (`usize::MAX` if unlimited).
-- A `mpsc::Receiver<QueueCommand>` from the UI.
-
-Algorithm:
-
-1. On `Enqueue { project, task, agent }`, append to the project's deque.
-2. On `Tick` or state change, for each project with no running task:
-   - Try `semaphore.try_acquire_owned()`.
-   - If acquired, pop head → spawn run → stash permit in the run record.
-3. On `RunExited`:
-   - Release permit.
-   - If status != success and `fail_fast` is set, mark the queue paused.
-   - Otherwise continue.
-4. On `Pause(project)` / `Resume(project)`: flip a flag; scheduler checks it
-   before popping.
-
-The engine is fully driven by messages; no timers are required. A 250 ms
-tick keeps the UI fresh.
-
----
-
-## 8. Template rendering pipeline
+## 6. Template rendering pipeline
 
 ```
 Template.body (string with MiniJinja tags)
             + Task.field_values (JSON object)
-            + built-in globals (project, now, derived.*, env-whitelist)
+            + built-in globals (task, template, derived.*, now)
                               │
                               ▼
                  MiniJinja render → Markdown string
                               │
                               ▼
-                 Frozen prompt written to run.prompt.md
+                 Prompt preview shown in the TUI and optionally saved to `prompt.md`
 ```
 
 **Built-in globals available in templates:**
@@ -294,7 +175,6 @@ Template.body (string with MiniJinja tags)
 |---|---|
 | `task.id`, `task.name`, `task.created_at` | Task metadata. |
 | `task.fields.*` | User-provided field values. |
-| `project.name`, `project.path`, `project.description` | Target project. |
 | `template.version`, `template.name` | Frozen template snapshot. |
 | `now` | UTC RFC-3339 timestamp (frozen at render). |
 | `derived.<key>` | Resolved derived-value providers. |
@@ -304,16 +184,14 @@ Template.body (string with MiniJinja tags)
 
 ---
 
-## 9. Extensibility seams
-
-Locked contracts in v0.1 so later phases don't break existing templates:
+## 7. Extensibility seams
 
 1. **Field type registry** — `FieldType` is an open enum modeled via a
    `FieldKind` string + `serde_json::Value` params. The registry resolves a
    `FieldKind` to a `FieldRenderer + FieldValidator` pair. New primitives
    register into the registry in `main.rs`.
 
-2. **`InteractiveComponent` trait** (v0.2, but signature reserved now):
+2. **`InteractiveComponent` trait** (reserved for future interactive fields):
    ```rust
    pub trait InteractiveComponent: Send + 'static {
        fn kind(&self) -> &'static str;
@@ -327,18 +205,15 @@ Locked contracts in v0.1 so later phases don't break existing templates:
    ```
    Registered via a `ComponentRegistry` keyed by `kind`.
 
-3. **Agent manifest schema** — frozen in `AGENTS.md`. Breaking changes go
-   through a `manifest_version` bump and a migrator.
+3. **Derived-value provider registry** — `DerivedProvider` trait; new
+   providers register in core.
 
-4. **Derived-value provider registry** — `DerivedProvider` trait; new
-   providers register in core. Only `file | cmd | env | tree` in v0.1.
-
-5. **Storage layout** — `lattice.version` at the data root enables
-   migrations on start.
+4. **Storage layout** — layout changes are handled by code updates; disk is
+   always the source of truth.
 
 ---
 
-## 10. Threading & concurrency contract
+## 8. Threading & concurrency contract
 
 - **UI thread:** runs the event loop, owns `Model`. Never blocks on I/O.
 - **Executor pool:** tokio multi-thread. Handles all I/O, watchers,
@@ -351,12 +226,10 @@ Locked contracts in v0.1 so later phases don't break existing templates:
 - `ui_tx: mpsc::UnboundedSender<Msg>` — executor → UI.
 - `cmd_tx: mpsc::UnboundedSender<Cmd>` — UI → executor.
 - `watcher_tx: broadcast::Sender<FsEvent>` — watcher → store layers.
-- `run_events: broadcast::Sender<RunEvent>` — runner → many consumers
-  (runtime view, history writer).
 
 ---
 
-## 11. Error model
+## 9. Error model
 
 - `LatticeError` in `lattice-core` is a `thiserror` enum per subsystem.
 - Binary-level errors are `anyhow::Error` with context.
@@ -368,7 +241,7 @@ Locked contracts in v0.1 so later phases don't break existing templates:
 
 ---
 
-## 12. Observability
+## 10. Observability
 
 - `tracing` spans per `Msg` and per `Cmd`.
 - Log levels: `error | warn | info | debug | trace`, default `info`.
@@ -379,7 +252,7 @@ Locked contracts in v0.1 so later phases don't break existing templates:
 
 ---
 
-## 13. Testing strategy
+## 11. Testing strategy
 
 1. **Unit tests** in `lattice-core`: validation, rendering, derived-value
    resolution. 90%+ coverage target here.
@@ -391,15 +264,13 @@ Locked contracts in v0.1 so later phases don't break existing templates:
    representative screens. Locks down UX regressions.
 5. **Prompt-render golden tests** — for every example template, compare
    rendered output against a `.md` fixture.
-6. **End-to-end smoke** — a `tests/e2e_cursor_stub.rs` that replaces
-   `cursor-agent` with a scripted fake binary (compiled in the test) and
-   runs a full dispatch lifecycle.
+6. **End-to-end smoke** — basic TUI render and store roundtrip tests.
 
 ---
 
-## 14. Packaging (v0.1)
+## 12. Packaging
 
 - `cargo install --path crates/lattice-bin`.
 - Single binary `lattice`.
-- No bundled assets (manifests embedded via `include_str!`).
+- No bundled assets.
 - macOS + Linux; Windows unsupported officially.

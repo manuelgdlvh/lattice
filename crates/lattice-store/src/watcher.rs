@@ -89,7 +89,7 @@ fn classify(paths: &Paths, path: &Path, removed: bool) -> Option<StoreEvent> {
     }
 }
 
-/// Classify a path from the config root (settings + agent manifests).
+/// Classify a path from the config root.
 fn classify_config(paths: &Paths, path: &Path) -> Option<StoreEvent> {
     let rel = path.strip_prefix(paths.config_root()).unwrap_or(path);
     if rel == Path::new("settings.toml") {

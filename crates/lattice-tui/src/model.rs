@@ -60,9 +60,8 @@ pub struct Model {
     pub confirm: Option<ConfirmPrompt>,
     pub form: Option<FormState>,
     /// Generic modal list overlay. Used for the template picker during
-    /// task creation, the project picker on the Tasks screen, and the
-    /// agent picker during dispatch. Each item carries its own accept
-    /// message so the picker itself is message-agnostic.
+    /// task creation. Each item carries its own accept message so the picker
+    /// itself is message-agnostic.
     pub picker: Option<Picker>,
     /// Modal sequence diagram editor for `sequence-gram` fields.
     pub sequence_editor: Option<SequenceEditorState>,
@@ -668,9 +667,7 @@ pub fn update(model: &mut Model, msg: Msg) -> Option<Cmd> {
                 return None;
             }
             // Single template? Skip the picker to save a click. With
-            // multiple templates we always ask — blindly picking the
-            // first template (like we used to) meant the user could
-            // not choose what to base the task on.
+            // multiple templates we always ask.
             if model.templates.len() == 1 {
                 let tid = model.templates[0].id;
                 open_create_task_form(model, tid);
@@ -805,7 +802,7 @@ pub fn update(model: &mut Model, msg: Msg) -> Option<Cmd> {
         Msg::DeleteTask(tid) => {
             model.confirm = Some(ConfirmPrompt {
                 title: "Delete task?".into(),
-                message: "Delete this task? Its prompt/snapshot will be removed.".into(),
+                message: "Delete this task and its files?".into(),
                 accept: Box::new(Msg::ConfirmDeleteTask(tid)),
             });
             None
@@ -845,7 +842,7 @@ pub fn update(model: &mut Model, msg: Msg) -> Option<Cmd> {
             if let Some(f) = model.form.as_mut() {
                 f.cursor = (f.cursor + 1) % f.fields.len().max(1);
                 // Land the caret at end-of-text so the user sees what
-                // they previously typed instead of a caret at col 0.
+                // is already typed instead of a caret at col 0.
                 if let Some(field) = f.fields.get_mut(f.cursor) {
                     field.caret = field.value.len();
                 }
@@ -1828,8 +1825,6 @@ pub enum Cmd {
     DeleteTemplate(TemplateId),
     DeleteTask(TaskId),
 }
-
-// (task execution removed; no task status)
 
 /// Friendly, multi-line example rendered into the `Fields (TOML)`
 /// editor when the user creates a new template. We deliberately show

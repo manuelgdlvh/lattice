@@ -2,12 +2,11 @@
 
 **Task-first, schema-driven AI dev orchestrator — in your terminal.**
 
-`lattice` is a TUI for orchestrating CLI coding agents around *tasks*, not chats. 
-A task is an instance of a
-template; a template defines the context, the schema-enforced fields
-the user must fill, and the markdown prompt that gets rendered for
-the agent. The idea is simple: **force structure in, get reviewable
-detail out.**
+`lattice` is a TUI for creating **structured tasks** from **templates**.
+A task is an instance of a template; a template defines the context, the
+schema-enforced fields the user must fill, and the Markdown prompt that
+gets rendered and previewed. The idea is simple: **force structure in, get
+reviewable detail out.**
 
 ---
 
@@ -22,12 +21,11 @@ detail out.**
 
 ## Features
 
-- **Projects** — register local directories as execution targets.
 - **Templates** — author schema-driven prompt templates with required
   and optional fields (textarea, select, multiselect, sequence-gram),
   plus a Jinja-rendered prompt body.
-- **Tasks** — instantiate a template against a project, fill the
-  fields, preview the rendered prompt, and save the prompt to a markdown file.
+- **Tasks** — instantiate a template, fill the fields, preview the rendered
+  prompt, and save the prompt to a markdown file.
 - **Settings** — read the live config and field type reference.
 
 All state lives on disk as flat TOML/Markdown files (no SQLite), with
@@ -71,7 +69,7 @@ cargo run -p lattice-bin
 
 | key | action |
 |---|---|
-| `1`–`4` | jump to a tab (Projects, Templates, Tasks, Settings) |
+| `1`–`3` | jump to a tab (Templates, Tasks, Settings) |
 | `Tab` / `Shift+Tab` | cycle tabs |
 | `?` / `F1` | help overlay |
 | `Ctrl+K` or `/` | command palette |
@@ -88,7 +86,7 @@ Inside screens: arrow keys to navigate, `Enter` to open, `n` to add,
 - **Async runtime**: `tokio` multi-thread. One unified `AppEvent`
   stream combines terminal events and a heartbeat tick.
 - **Storage**: `Paths` resolves XDG dirs; `FileStore` implements the
-  `Projects` / `Templates` / `Tasks` / `SettingsStore` traits over atomic file writes. `CachedX`
+  `Templates` / `Tasks` / `SettingsStore` traits over atomic file writes. `CachedX`
   decorators add LRU caching. A `notify`-based watcher lets the UI
   react to on-disk edits.
 

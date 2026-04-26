@@ -9,57 +9,32 @@ the page cache, and the invariants the persistence layer must uphold.
 
 lattice uses **two roots**, both XDG-compliant:
 
-- **Config root** (`$XDG_CONFIG_HOME/lattice` — default
-  `~/.config/lattice`):
+- **Config root** (`$XDG_CONFIG_HOME/lattice` — default `~/.config/lattice`):
   User-authored and hand-editable. Safe to check into git / dotfiles.
 
-- **State root** (`$XDG_DATA_HOME/lattice` — default
-  `~/.local/share/lattice`):
-  Runtime outputs. Large, log-heavy, not for git.
+- **State root** (`$XDG_DATA_HOME/lattice` — default `~/.local/share/lattice`):
+  App-owned state (templates, tasks, cache, logs).
 
-Both roots can be overridden with `--config-dir` and `--state-dir` CLI
-flags or env vars (`LATTICE_CONFIG_DIR`, `LATTICE_STATE_DIR`).
+Both roots can be overridden with env vars (`LATTICE_CONFIG_DIR`, `LATTICE_STATE_DIR`).
 
 ```
 $XDG_CONFIG_HOME/lattice/
-├── lattice.version                 # single line, e.g. "1"
-├── settings.toml                     # global settings
-├── agents/                           # user-level agent manifest overrides
-│   └── cursor-agent.toml
-├── projects/
-│   └── <project_id>.toml             # one file per project
-├── templates/
-│   ├── <template_id>/
-│   │   ├── current.toml              # latest version
-│   │   ├── v1.toml                   # frozen prior version (N-1)
-│   │   ├── v2.toml
-│   │   └── ...                       # kept forever until user purges
-│   └── ...
-└── tasks/
-    └── <project_id>/
-        └── <task_id>/
-            ├── task.toml             # task metadata + field values
-            ├── template_snapshot.toml# frozen copy of the template
-            └── draft.flag            # present while task is a draft
+└── settings.toml                     # global settings
 ```
 
 ```
 $XDG_DATA_HOME/lattice/
-├── queues/
-│   └── <project_id>.toml             # persisted queue state
-├── runs/
-│   └── <project_id>/
-│       └── <run_id>/
-│           ├── run.toml              # run metadata
-│           ├── prompt.md             # frozen rendered prompt (dispatched as-is)
-│           ├── task_snapshot.toml    # frozen copy of the task
-│           ├── template_snapshot.toml# frozen copy of the template
-│           ├── stdout.log
-│           ├── stderr.log
-│           └── exit.toml             # exit status, timestamps, signals
+├── templates/
+│   └── <template_id>/
+│       └── template.toml             # current template definition
+├── tasks/
+│   └── <task_id>/
+│       ├── task.toml                 # task metadata + field values
+│       ├── template.snapshot.toml    # frozen template copy
+│       └── prompt.md                 # rendered prompt (preview artifact)
 ├── cache/
-│   └── index.toml                    # optional indices (e.g. history idx)
-└── lattice.log                     # rotating log (10 MB × 5)
+└── logs/
+    └── lattice.log                  # rotating log
 ```
 
 **Why files per entity, not a single JSON blob**:
@@ -67,7 +42,7 @@ $XDG_DATA_HOME/lattice/
 - Git-friendly diffs.
 - Failure isolation: one corrupt file does not take down the app.
 - Atomic writes per entity are trivial.
-- Easy partial loading (load project list without loading all templates).
+- Easy partial loading (e.g. list templates without loading every task).
 
 ---
 
@@ -76,51 +51,14 @@ $XDG_DATA_HOME/lattice/
 Every entity uses TOML (author-facing) unless stated otherwise. IDs are
 **UUID v7** (time-sortable). Timestamps are RFC-3339 UTC.
 
-Examples below are illustrative; full JSON-schema-style references live in
-`TEMPLATES.md` and `AGENTS.md` for their respective entities.
+Examples below are illustrative; the full template schema reference lives in
+`TEMPLATES.md`.
 
 ### 2.1 Settings — `settings.toml`
 
-```toml
-schema_version = 1
+Settings includes cache/logging settings.
 
-[runtime]
-max_concurrent_agents = 0            # 0 == unlimited
-fail_fast = true                     # per-project default; overridable per project
-kill_grace_seconds = 5
-
-[cache]
-max_entries = 4096
-max_bytes = 67_108_864               # 64 MiB
-
-[logging]
-level = "info"                       # error|warn|info|debug|trace
-```
-
-### 2.2 Project — `projects/<id>.toml`
-
-```toml
-schema_version = 1
-id   = "019f2d5a-8b70-7a3a-b6c1-56fc42a0d3b1"
-name = "acme-backend"
-description = "Our payment gateway service."
-path = "/home/manu/code/acme-backend"
-created_at = "2026-04-24T10:12:00Z"
-updated_at = "2026-04-24T10:12:00Z"
-
-[queue]
-fail_fast = true                     # overrides global default
-
-[tags]
-owner = "payments-team"
-```
-
-Invariants:
-- `path` must exist and be a directory at load time (lazy check; warning
-  if missing, not a hard error — user may have unplugged a drive).
-- `id` must match filename.
-
-### 2.3 Template — `templates/<id>/current.toml`
+### 2.2 Template — `templates/<id>/template.toml`
 
 See `TEMPLATES.md` for the full schema. Header example:
 
@@ -150,7 +88,6 @@ You are working on a Rust codebase. Follow the project's existing style.
 Run `cargo fmt` and `cargo clippy` before reporting completion.
 
 ## Target
-Project: `{{ project.name }}` at `{{ project.path }}`
 Module:  `{{ task.fields.module_path }}`
 
 ## Constraints
@@ -166,24 +103,17 @@ A minimal diff, formatted, clippy-clean, with updated tests.
 ```
 
 Invariants:
-- `version` bumps monotonically. Saving the same content is a no-op (no
-  version bump).
-- Prior versions saved as `v<N>.toml` for reference; current is
-  `current.toml`.
-- Field `id`s unique within a template; stable (renames require tooling,
-  not allowed via UI).
+- Field `id`s unique within a template; stable (renames require tooling).
 
-### 2.4 Task — `tasks/<project_id>/<task_id>/task.toml`
+### 2.3 Task — `tasks/<task_id>/task.toml`
 
 ```toml
 schema_version = 1
 id         = "019f2d5a-c103-7d14-8b2e-9a44c77aa210"
-project_id = "019f2d5a-8b70-7a3a-b6c1-56fc42a0d3b1"
 template_id      = "019f2d5a-b1e2-7b1d-93c0-8c7d5a42a100"
 template_version = 7
 name       = "refactor auth middleware"
 created_at = "2026-04-24T10:30:00Z"
-status     = "draft"                 # draft|queued|running|succeeded|failed|killed|interrupted
 
 [fields]
 module_path = "src/auth/middleware.rs"
@@ -191,82 +121,11 @@ constraints = ["no new deps", "preserve public API"]
 acceptance  = "All existing tests pass; new tests for edge cases."
 ```
 
-Companion file `template_snapshot.toml` is a byte copy of the template at
+Companion file `template.snapshot.toml` is a byte copy of the template at
 instantiation time. This decouples the task from later template edits.
 
-A `draft.flag` (empty file) exists iff `status == "draft"`. This lets us
-enumerate drafts without parsing every `task.toml`.
-
 Invariants:
-- Once `status` leaves `draft`, field values are frozen (edits require
-  re-running with edits, which creates a new task).
 - `template_version` must equal the version in `template_snapshot.toml`.
-
-### 2.5 Queue — `queues/<project_id>.toml`
-
-```toml
-schema_version = 1
-project_id = "019f2d5a-8b70-7a3a-b6c1-56fc42a0d3b1"
-paused = false
-paused_reason = ""
-
-[[entries]]
-task_id  = "019f2d5a-c103-7d14-8b2e-9a44c77aa210"
-agent_id = "cursor-agent"
-enqueued_at = "2026-04-24T10:40:00Z"
-```
-
-Invariants:
-- Order is authoritative: head is index 0.
-- A running task is **removed** from `entries` at dispatch; the
-  corresponding `run.toml` is the source of truth until completion.
-- When the app exits mid-run, its queue file is unchanged; on restart,
-  the in-progress `run.toml` is marked `interrupted` and the queue is
-  paused with `paused_reason = "previous run interrupted"`.
-
-### 2.6 Run — `runs/<project_id>/<run_id>/...`
-
-`run.toml`:
-
-```toml
-schema_version = 1
-id         = "019f2d5a-d201-7e3f-a1bd-1c44a8f2b330"
-project_id = "019f2d5a-8b70-7a3a-b6c1-56fc42a0d3b1"
-task_id    = "019f2d5a-c103-7d14-8b2e-9a44c77aa210"
-agent_id   = "cursor-agent"
-agent_version = "2.3.1"
-status     = "running"               # queued|running|succeeded|failed|killed|interrupted
-queued_at  = "2026-04-24T10:40:00Z"
-started_at = "2026-04-24T10:40:02Z"
-finished_at = ""                     # empty until done
-pid        = 482910
-
-[log]
-stdout_bytes = 0
-stderr_bytes = 0
-truncated    = false
-```
-
-`exit.toml` (written on completion):
-
-```toml
-exit_code = 0
-signal    = ""                       # "SIGKILL" if killed
-finished_at = "2026-04-24T10:45:31Z"
-duration_ms = 329_000
-```
-
-`prompt.md` is the frozen rendered Markdown sent to the agent. Never
-modified after dispatch.
-
-`stdout.log` / `stderr.log` are raw bytes captured from the child.
-Line-buffered append; `fsync` on exit.
-
-### 2.7 Agent manifest — see `AGENTS.md`
-
-Schema and full example live in `AGENTS.md`. Built-in manifests are
-embedded via `include_str!`; user manifests live in
-`$XDG_CONFIG_HOME/lattice/agents/<id>.toml`.
 
 ---
 
@@ -296,7 +155,7 @@ Guarantees:
 - `fsync` on the parent makes the rename durable across power loss on
   ext4/xfs/apfs.
 
-Directory mutations (create project dir, run dir) use `mkdir -p`
+Directory mutations (create template/task dir) use `mkdir -p`
 semantics, are idempotent, and are also parent-fsynced on critical
 moments.
 
@@ -304,8 +163,8 @@ moments.
 
 ## 5. Page cache
 
-Motivation: reading hundreds of task/run files per screen render is too
-slow; the LRU keeps hot reads in memory without becoming authoritative.
+Motivation: reading many files per render is too slow; the LRU keeps hot reads
+in memory without becoming authoritative.
 
 Design:
 
@@ -337,9 +196,7 @@ Concurrency:
 
 ## 6. File watcher
 
-- `notify::recommended_watcher` on both config root and state root
-  (state root mostly for runs; usually the writer is us, but we still
-  want to detect external tamper).
+- `notify::recommended_watcher` on the config root and state root.
 - Events coalesced with a 100 ms debounce.
 - Foreign-write events → cache invalidation → `Mutation::External`
   broadcast → UI lists re-load affected entities.
@@ -352,44 +209,19 @@ Guardrails:
 
 ---
 
-## 7. Migrations
+## 7. Integrity checks
 
-`lattice.version` at the config root tracks the schema version of the
-layout. On startup:
-
-1. Read version.
-2. If < current, apply migrations in order (pure functions over files).
-3. Write the new version **after** all migrations succeed (atomic).
-4. If a migration fails, abort with a clear message; leave version file
-   untouched.
-
-v0.1 ships with `schema_version = 1` only. Migrations will matter starting
-v0.4 when the template schema evolves.
+- Every TOML file must parse.
+- Every task must have a `template.snapshot.toml`.
+- Every task's `template_id` must reference an existing template.
 
 ---
 
-## 8. Integrity checks
+## 8. Size budgets
 
-`lattice doctor` (planned v1.0, but the primitives exist in v0.1):
-
-- Validate every TOML file parses.
-- Ensure every task references an existing project and has a
-  `template_snapshot.toml`.
-- Ensure every queue entry references an existing non-draft task.
-- Ensure every run directory has `run.toml`; if `exit.toml` is present,
-  `status` must be a terminal status.
-
----
-
-## 9. Size budgets
-
-- A typical project file: < 2 KiB.
 - A typical template: < 20 KiB.
 - A typical task: < 10 KiB.
-- A typical run: tens of KB metadata + up to MBs of logs.
 
 Targets:
 
-- 10,000 history runs on a single disk layout should still feel fast.
-- History screen uses an on-disk index (`cache/index.toml`) built lazily
-  from `run.toml` files to avoid scanning all directories per render.
+- Thousands of tasks and templates on disk should still feel fast.

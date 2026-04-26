@@ -220,9 +220,6 @@ impl<S: Tasks> Tasks for CachedTasks<S> {
     }
 }
 
-// -------- Runs/Queues -------------------------------------------------
-// Agent execution has been removed, so there are no caches for runs/queues.
-
 // -------- Settings ---------------------------------------------------
 
 #[derive(Debug)]
