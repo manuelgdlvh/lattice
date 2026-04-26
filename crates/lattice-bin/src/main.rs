@@ -1,7 +1,7 @@
 //! `lattice` — task-first schema-driven AI dev orchestrator.
 //!
-//! This binary wires the store, agent registry, queue engine, and TUI
-//! into a running app. The heavy lifting lives in the library crates.
+//! This binary wires the store and TUI into a running app.
+//! Agent execution has been removed.
 
 #![deny(unsafe_code)]
 
@@ -10,10 +10,9 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use tracing_subscriber::EnvFilter;
 
-use lattice_agents::{AgentRegistry, QueueConfig, QueueEngine};
 use lattice_store::filestore::FileStore;
 use lattice_store::paths::Paths;
-use lattice_store::store::{Projects, SettingsStore, Templates};
+use lattice_store::store::{SettingsStore, Templates};
 use lattice_tui::{App, AppContext};
 
 mod default_templates;
@@ -46,49 +45,12 @@ async fn main() -> Result<()> {
 
     // Load settings — the defaults kick in when `settings.toml` is
     // missing on first run.
-    let settings = SettingsStore::load(&*store).await.unwrap_or_default();
-
-    // Discover agents. `from_config_dir` auto-detects on load.
-    let agents_dir = paths.agents_dir();
-    std::fs::create_dir_all(&agents_dir).ok();
-    let registry = Arc::new(AgentRegistry::from_config_dir(&agents_dir)?);
-
-    // Queue engine.
-    let cfg = QueueConfig {
-        max_concurrent: settings.runtime.max_concurrent_agents,
-        fail_fast: settings.runtime.fail_fast,
-    };
-    let engine = QueueEngine::new(
-        store.clone(),
-        store.clone(),
-        store.clone(),
-        registry.clone(),
-        paths.clone(),
-        cfg,
-    );
-
-    // Rehydrate any queues left over from a previous session. Invoke
-    // through the trait because `FileStore` also impls other `list()`
-    // methods for queues/templates.
-    match <FileStore as Projects>::list(&store).await {
-        Ok(projects) => {
-            let pairs: Vec<_> = projects.iter().map(|p| (p.id, p.path.clone())).collect();
-            if let Err(e) = engine.resume_with_paths(&pairs).await {
-                tracing::warn!("resume_with_paths: {e}");
-            }
-        }
-        Err(e) => tracing::warn!("projects.list on boot: {e}"),
-    }
+    let _settings = SettingsStore::load(&*store).await.unwrap_or_default();
 
     let ctx = AppContext {
-        projects: store.clone(),
         templates: store.clone(),
         tasks: store.clone(),
-        runs: store.clone(),
-        queues: store.clone(),
         settings: store.clone(),
-        registry,
-        engine,
         paths,
     };
 

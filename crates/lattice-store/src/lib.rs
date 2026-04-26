@@ -21,15 +21,12 @@ pub mod providers;
 pub mod store;
 pub mod watcher;
 
-pub use cache::{
-    CacheConfig, CachedProjects, CachedQueues, CachedRuns, CachedSettings, CachedTasks,
-    CachedTemplates,
-};
+pub use cache::{CacheConfig, CachedSettings, CachedTasks, CachedTemplates};
 pub use error::{StoreError, StoreResult};
 pub use filestore::FileStore;
 pub use paths::Paths;
 pub use providers::{RealCmd, RealEnv, RealFs};
-pub use store::{Projects, Queues, Runs, SettingsStore, StoreEvent, Tasks, Templates};
+pub use store::{SettingsStore, StoreEvent, Tasks, Templates};
 pub use watcher::FsWatcher;
 
 pub fn version() -> &'static str {

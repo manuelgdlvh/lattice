@@ -355,11 +355,23 @@ mod tests {
 
     #[test]
     fn sequence_gram_moves_edge_context_after_mermaid_when_pre_fenced() {
-        let src = "## Diagram\nedgeContext:\n[R1]: note\n```mermaid\nsequenceDiagram\n  A->>B: Hi\n```\n";
+        let src =
+            "## Diagram\nedgeContext:\n[R1]: note\n```mermaid\nsequenceDiagram\n  A->>B: Hi\n```\n";
         let out = render("{{ s | sequence_gram }}", serde_json::json!({ "s": src }));
         let mermaid_pos = out.find("```mermaid").unwrap();
         let edge_pos = out.find("edgeContext:").unwrap();
-        assert!(edge_pos > mermaid_pos, "edgeContext should come after Mermaid");
+        assert!(
+            edge_pos > mermaid_pos,
+            "edgeContext should come after Mermaid"
+        );
         assert!(out.contains("[R1]: note") || out.contains("[R1] -> note"));
+    }
+
+    #[test]
+    fn sequence_gram_preserves_mermaid_notes() {
+        let src = "## Diagram\n```mermaid\nsequenceDiagram\n  participant John\n  John->>John: Hi<br/>there\n  Note over John: Context<br/>two lines\n```\n";
+        let out = render("{{ s | sequence_gram }}", serde_json::json!({ "s": src }));
+        assert_eq!(out, src);
+        assert!(out.contains("Note over John: Context<br/>two lines"));
     }
 }

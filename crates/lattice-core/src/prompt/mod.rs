@@ -18,7 +18,7 @@ pub use filters::register_filters;
 use minijinja::{Environment, UndefinedBehavior, Value as JValue};
 use serde::Serialize;
 
-use crate::entities::{Project, Task, Template};
+use crate::entities::{Task, Template};
 use crate::error::RenderError;
 use crate::time::Timestamp;
 
@@ -27,19 +27,10 @@ use crate::time::Timestamp;
 /// Mirrors the table in `docs/TEMPLATES.md §6.2`.
 #[derive(Debug, Serialize)]
 pub struct RenderScope<'a> {
-    pub project: ProjectScope<'a>,
     pub task: TaskScope<'a>,
     pub template: TemplateScope<'a>,
     pub derived: &'a serde_json::Map<String, serde_json::Value>,
     pub now: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct ProjectScope<'a> {
-    pub id: String,
-    pub name: &'a str,
-    pub path: String,
-    pub description: &'a str,
 }
 
 #[derive(Debug, Serialize)]
@@ -58,12 +49,7 @@ pub struct TemplateScope<'a> {
 }
 
 /// The main entry point.
-pub fn render(
-    template: &Template,
-    task: &Task,
-    project: &Project,
-    now: Timestamp,
-) -> Result<String, RenderError> {
+pub fn render(template: &Template, task: &Task, now: Timestamp) -> Result<String, RenderError> {
     let body = template.prompt.template.as_str();
 
     let mut env = Environment::new();
@@ -76,12 +62,6 @@ pub fn render(
     let derived = to_json_map(&task.derived);
 
     let scope = RenderScope {
-        project: ProjectScope {
-            id: project.id.to_string(),
-            name: &project.name,
-            path: project.path.to_string_lossy().into_owned(),
-            description: &project.description,
-        },
         task: TaskScope {
             id: task.id.to_string(),
             name: &task.name,
@@ -112,40 +92,36 @@ fn to_json_map<S: Serialize>(v: &S) -> serde_json::Map<String, serde_json::Value
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::entities::{PromptSpec, TaskStatus};
+    use crate::entities::PromptSpec;
     use serde_json::json;
 
-    fn fixtures() -> (Project, Template, Task) {
+    fn fixtures() -> (Template, Task) {
         let now = Timestamp::parse("2026-04-24T10:00:00Z").unwrap();
-        let project = Project::new("acme", "/tmp/acme", now);
         let mut template = Template::new("bug-fix", now);
         template.prompt = PromptSpec {
-            template:
-                "hello {{ project.name }} / {{ task.fields.ticket }} ({{ template.version }})"
-                    .into(),
+            template: "hello {{ task.fields.ticket }} ({{ template.version }})".into(),
         };
-        let mut task = Task::new(project.id, template.id, template.version, "t", now);
-        task.status = TaskStatus::Draft;
+        let mut task = Task::new(template.id, template.version, "t", now);
         task.fields.insert("ticket".into(), json!("PROJ-123"));
-        (project, template, task)
+        (template, task)
     }
 
     #[test]
     fn renders_simple_prompt() {
-        let (project, template, task) = fixtures();
+        let (template, task) = fixtures();
         let now = Timestamp::parse("2026-04-24T12:00:00Z").unwrap();
-        let out = render(&template, &task, &project, now).unwrap();
-        assert_eq!(out, "hello acme / PROJ-123 (1)");
+        let out = render(&template, &task, now).unwrap();
+        assert_eq!(out, "hello PROJ-123 (1)");
     }
 
     #[test]
     fn strict_mode_errors_on_undefined() {
-        let (project, mut template, task) = fixtures();
+        let (mut template, task) = fixtures();
         template.prompt = PromptSpec {
             template: "{{ task.fields.not_there }}".into(),
         };
         let now = Timestamp::parse("2026-04-24T12:00:00Z").unwrap();
-        let err = render(&template, &task, &project, now).unwrap_err();
+        let err = render(&template, &task, now).unwrap_err();
         assert!(matches!(err, RenderError::Engine(_)));
     }
 }

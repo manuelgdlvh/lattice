@@ -3,7 +3,6 @@ resolver = "2"
 members = [
     "crates/lattice-core",
     "crates/lattice-store",
-    "crates/lattice-agents",
     "crates/lattice-tui",
     "crates/lattice-bin",
 ]
@@ -40,7 +39,6 @@ too_many_lines = "allow"
 # Internal crates
 lattice-core = { path = "crates/lattice-core" }
 lattice-store = { path = "crates/lattice-store" }
-lattice-agents = { path = "crates/lattice-agents" }
 lattice-tui = { path = "crates/lattice-tui" }
 
 # Serialization

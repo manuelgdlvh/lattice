@@ -16,12 +16,6 @@ pub struct Command {
 
 pub const COMMANDS: &[Command] = &[
     Command {
-        id: "go-projects",
-        label: "Go: Projects",
-        hint: "open the Projects screen",
-        msg: || Msg::GoScreen(Screen::Projects),
-    },
-    Command {
         id: "go-templates",
         label: "Go: Templates",
         hint: "open the Templates screen",
@@ -34,21 +28,9 @@ pub const COMMANDS: &[Command] = &[
         msg: || Msg::GoScreen(Screen::Tasks),
     },
     Command {
-        id: "go-runtime",
-        label: "Go: Runtime",
-        hint: "inspect running agents",
-        msg: || Msg::GoScreen(Screen::Runtime),
-    },
-    Command {
-        id: "go-history",
-        label: "Go: History",
-        hint: "past task runs",
-        msg: || Msg::GoScreen(Screen::History),
-    },
-    Command {
         id: "go-info",
         label: "Go: Info",
-        hint: "app info and agents",
+        hint: "app info",
         msg: || Msg::GoScreen(Screen::Info),
     },
     Command {
@@ -56,12 +38,6 @@ pub const COMMANDS: &[Command] = &[
         label: "Help",
         hint: "show keybindings",
         msg: || Msg::ShowHelp,
-    },
-    Command {
-        id: "new-project",
-        label: "New Project",
-        hint: "create a project",
-        msg: || Msg::OpenCreateProject,
     },
     Command {
         id: "new-template",
@@ -125,6 +101,6 @@ mod tests {
     #[test]
     fn resolve_uses_cursor() {
         let msg = resolve("go", 0);
-        assert!(matches!(msg, Some(Msg::GoScreen(Screen::Projects))));
+        assert!(matches!(msg, Some(Msg::GoScreen(Screen::Templates))));
     }
 }

@@ -40,6 +40,7 @@ pub fn translate(model: &Model, key: KeyEvent) -> Option<Msg> {
     // Sequence diagram editor captures everything while open.
     if let Some(ed) = &model.sequence_editor {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let alt = key.modifiers.contains(KeyModifiers::ALT);
 
         // Keys that always work (even while typing).
         if matches!(key.code, KeyCode::Esc) {
@@ -52,6 +53,15 @@ pub fn translate(model: &Model, key: KeyEvent) -> Option<Msg> {
             return Some(Msg::SeqEdBackspace);
         }
         if matches!(key.code, KeyCode::Enter) {
+            // For edge context, allow multiline input: Alt+Enter (or Ctrl+Enter)
+            // inserts a newline; plain Enter saves.
+            if matches!(
+                ed.mode,
+                crate::model::SequenceEditorMode::EditEdgeContext { .. }
+            ) && (alt || ctrl)
+            {
+                return Some(Msg::SeqEdInputChar('\n'));
+            }
             return Some(Msg::SeqEdConfirm);
         }
 
@@ -172,12 +182,9 @@ pub fn translate(model: &Model, key: KeyEvent) -> Option<Msg> {
         (KeyCode::Esc, _) if !model.toasts.is_empty() => return Some(Msg::DismissToast),
         (KeyCode::Tab, _) => return Some(Msg::NextTab),
         (KeyCode::BackTab, _) => return Some(Msg::PrevTab),
-        (KeyCode::Char('1'), _) => return Some(Msg::GoScreen(Screen::Projects)),
-        (KeyCode::Char('2'), _) => return Some(Msg::GoScreen(Screen::Templates)),
-        (KeyCode::Char('3'), _) => return Some(Msg::GoScreen(Screen::Tasks)),
-        (KeyCode::Char('4'), _) => return Some(Msg::GoScreen(Screen::Runtime)),
-        (KeyCode::Char('5'), _) => return Some(Msg::GoScreen(Screen::History)),
-        (KeyCode::Char('6'), _) => return Some(Msg::GoScreen(Screen::Info)),
+        (KeyCode::Char('1'), _) => return Some(Msg::GoScreen(Screen::Templates)),
+        (KeyCode::Char('2'), _) => return Some(Msg::GoScreen(Screen::Tasks)),
+        (KeyCode::Char('3'), _) => return Some(Msg::GoScreen(Screen::Info)),
         _ => {}
     }
 
@@ -197,7 +204,7 @@ pub const GLOBAL_KEYS: &[KeybindHelp] = &[
         description: "Next/prev screen",
     },
     KeybindHelp {
-        key: "1..6",
+        key: "1..3",
         description: "Jump to screen",
     },
     KeybindHelp {
@@ -291,16 +298,8 @@ pub const SCREEN_KEYS: &[KeybindHelp] = &[
         description: "Toggle multi-select (Tasks)",
     },
     KeybindHelp {
-        key: "x",
-        description: "Dispatch selected tasks (Tasks)",
-    },
-    KeybindHelp {
         key: "w",
         description: "Write selected task prompt to markdown (Tasks)",
-    },
-    KeybindHelp {
-        key: "k",
-        description: "Kill (Runtime)",
     },
 ];
 
@@ -319,7 +318,7 @@ mod tests {
                 .map(|(i, &ml)| FormField::plain(format!("f{i}"), "", false, ml))
                 .collect(),
             cursor,
-            submit: FormSubmit::CreateProject,
+            submit: FormSubmit::CreateTemplate,
         });
         m
     }

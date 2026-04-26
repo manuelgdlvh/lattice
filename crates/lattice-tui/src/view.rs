@@ -95,7 +95,7 @@ fn render_sequence_editor(
             Span::styled("m", Style::default().fg(Color::Cyan)),
             Span::raw(" add message  "),
             Span::styled("c", Style::default().fg(Color::Cyan)),
-            Span::raw(" edge context  "),
+            Span::raw(" add notes  "),
             Span::styled("x", Style::default().fg(Color::Cyan)),
             Span::raw(" del event  "),
             Span::styled("X", Style::default().fg(Color::Cyan)),
@@ -105,12 +105,16 @@ fn render_sequence_editor(
     let inner = block.inner(rect);
     frame.render_widget(block, rect);
 
+    let footer_h = match ed.mode {
+        crate::model::SequenceEditorMode::EditEdgeContext { .. } => 6,
+        _ => 3,
+    };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(4),
             Constraint::Min(0),
-            Constraint::Length(3),
+            Constraint::Length(footer_h),
         ])
         .split(inner);
 
@@ -193,7 +197,7 @@ fn render_sequence_editor(
                     from,
                     to,
                     dashed,
-                    rel_id,
+                    rel_id: _,
                     text,
                     edge_context,
                 } => {
@@ -208,7 +212,7 @@ fn render_sequence_editor(
                         ""
                     };
                     (
-                        format!("[{rel_id}] {from} {arrow} {to}: {text}{marker}"),
+                        format!("{from} {arrow} {to}: {text}{marker}"),
                         Style::default(),
                     )
                 }
@@ -228,12 +232,26 @@ fn render_sequence_editor(
     frame.render_widget(list, mid[1]);
 
     // Footer/input.
-    let footer = match &ed.mode {
-        crate::model::SequenceEditorMode::Browse => Line::from(Span::styled(
-            "Tip: press c to edit EdgeContext for selected message.",
+    let footer_width = chunks[2].width.saturating_sub(2) as usize;
+    fn tail_window(s: &str, max_chars: usize) -> String {
+        if max_chars <= 1 {
+            return "…".into();
+        }
+        let n = s.chars().count();
+        if n <= max_chars {
+            return s.to_string();
+        }
+        let keep = max_chars.saturating_sub(1);
+        let tail: String = s.chars().skip(n.saturating_sub(keep)).collect();
+        format!("…{tail}")
+    }
+
+    let footer_lines: Vec<Line<'static>> = match &ed.mode {
+        crate::model::SequenceEditorMode::Browse => vec![Line::from(Span::styled(
+            "Tip: press c to add notes for selected message.",
             Style::default().fg(Color::DarkGray),
-        )),
-        crate::model::SequenceEditorMode::AddParticipant { input } => Line::from(vec![
+        ))],
+        crate::model::SequenceEditorMode::AddParticipant { input } => vec![Line::from(vec![
             Span::styled(
                 "Add participant: ",
                 Style::default().add_modifier(Modifier::BOLD),
@@ -241,8 +259,8 @@ fn render_sequence_editor(
             Span::raw(input.clone()),
             Span::styled("▌", Style::default().fg(Color::Cyan)),
             Span::styled("  Enter=add", Style::default().fg(Color::DarkGray)),
-        ]),
-        crate::model::SequenceEditorMode::AddDiagram { input } => Line::from(vec![
+        ])],
+        crate::model::SequenceEditorMode::AddDiagram { input } => vec![Line::from(vec![
             Span::styled(
                 "New diagram name: ",
                 Style::default().add_modifier(Modifier::BOLD),
@@ -250,8 +268,8 @@ fn render_sequence_editor(
             Span::raw(input.clone()),
             Span::styled("▌", Style::default().fg(Color::Cyan)),
             Span::styled("  Enter=create", Style::default().fg(Color::DarkGray)),
-        ]),
-        crate::model::SequenceEditorMode::RenameDiagram { input } => Line::from(vec![
+        ])],
+        crate::model::SequenceEditorMode::RenameDiagram { input } => vec![Line::from(vec![
             Span::styled(
                 "Rename diagram: ",
                 Style::default().add_modifier(Modifier::BOLD),
@@ -259,7 +277,7 @@ fn render_sequence_editor(
             Span::raw(input.clone()),
             Span::styled("▌", Style::default().fg(Color::Cyan)),
             Span::styled("  Enter=save", Style::default().fg(Color::DarkGray)),
-        ]),
+        ])],
         crate::model::SequenceEditorMode::AddMessage {
             from,
             to,
@@ -274,7 +292,7 @@ fn render_sequence_editor(
                 .and_then(|d| d.participants.get(*to).cloned())
                 .unwrap_or_default();
             let arrow = if *dashed { "-->>" } else { "->>" };
-            Line::from(vec![
+            vec![Line::from(vec![
                 Span::styled(
                     "Add message: ",
                     Style::default().add_modifier(Modifier::BOLD),
@@ -289,22 +307,31 @@ fn render_sequence_editor(
                     "  Ctrl+←/→=from  ←/→=to  Enter=add",
                     Style::default().fg(Color::DarkGray),
                 ),
-            ])
+            ])]
         }
-        crate::model::SequenceEditorMode::EditEdgeContext { input } => Line::from(vec![
-            Span::styled(
-                "EdgeContext: ",
-                Style::default().add_modifier(Modifier::BOLD),
-            ),
-            Span::raw(input.clone()),
-            Span::styled("▌", Style::default().fg(Color::Cyan)),
-            Span::styled(
-                "  Enter=save  Esc=cancel",
-                Style::default().fg(Color::DarkGray),
-            ),
-        ]),
+        crate::model::SequenceEditorMode::EditEdgeContext { input } => {
+            // Keep the editor compact (3 footer lines total) but still make typing visible:
+            // show a single-line window of the full content with newlines rendered as " ↩ ".
+            // The saved value is still multiline; newlines become `<br/>` in Mermaid output.
+            let flat = input.replace('\n', " ↩ ");
+            let visible = tail_window(&flat, footer_width.saturating_sub(2).max(8));
+            vec![
+                Line::from(vec![
+                    Span::styled("Notes: ", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::styled(
+                        "Alt+Enter=newline  Enter=save  Esc=cancel",
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                ]),
+                Line::from(vec![
+                    Span::raw(visible),
+                    Span::styled("▌", Style::default().fg(Color::Cyan)),
+                ]),
+                Line::from(""),
+            ]
+        }
     };
-    let foot = Paragraph::new(vec![footer])
+    let foot = Paragraph::new(footer_lines)
         .wrap(Wrap { trim: false })
         .block(Block::default().borders(Borders::ALL));
     frame.render_widget(foot, chunks[2]);
@@ -467,7 +494,7 @@ fn render_sequence_preview(
 /// tails on failed runs) get enough rows to actually display the
 /// information instead of being silently truncated.
 fn status_height_for(model: &Model) -> u16 {
-    if let Some(t) = model.toasts.first() {
+    if let Some(t) = model.toasts.last() {
         let lines = 1 + t.text.chars().filter(|c| *c == '\n').count();
         let clamped = u16::try_from(lines.min(16)).unwrap_or(1);
         clamped.max(1)
@@ -513,7 +540,7 @@ fn render_tabs(frame: &mut Frame<'_>, area: Rect, model: &Model) {
 }
 
 fn render_status(frame: &mut Frame<'_>, area: Rect, model: &Model) {
-    let lines: Vec<Line<'_>> = if let Some(toast) = model.toasts.first() {
+    let lines: Vec<Line<'_>> = if let Some(toast) = model.toasts.last() {
         let (prefix, style) = match toast.level {
             ToastLevel::Info => ("[info] ", Style::default().fg(Color::Green)),
             ToastLevel::Warn => ("[warn] ", Style::default().fg(Color::Yellow)),
@@ -679,7 +706,14 @@ fn render_form(frame: &mut Frame<'_>, area: Rect, form: &crate::model::FormState
             format!(" {}{f3_badge} ", field.label)
         };
         let caret = field.caret.min(field.value.len());
-        let body = if focused {
+        let body = if is_seq {
+            if field.value.trim().is_empty() {
+                "<sequence diagram — press F3 to edit>".to_string()
+            } else {
+                // Keep the raw stored content visible, but make it clear it's not editable here.
+                field.value.clone()
+            }
+        } else if focused {
             // Insert the caret at its real byte offset so the user sees
             // exactly where the next character will land. This plays
             // nicely with arrow-key navigation inside multiline text.

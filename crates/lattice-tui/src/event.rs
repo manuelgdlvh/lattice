@@ -1,20 +1,16 @@
 //! Merged event stream for the main loop.
 //!
-//! Terminal key events (`crossterm`), queue events (from the agents
-//! crate), and log lines from the inspected run all funnel through
-//! here so the shell can `select!` on a single receiver.
+//! Terminal key events (`crossterm`) funnel through here so the shell
+//! can `select!` on a single receiver.
 
 use crossterm::event::{Event as CtEvent, EventStream};
 use futures_util::StreamExt;
-use lattice_agents::QueueEvent;
 use tokio::sync::mpsc;
 
 /// The unified event type the app loop consumes.
 #[derive(Debug)]
 pub enum AppEvent {
     Terminal(CtEvent),
-    Queue(QueueEvent),
-    LogLine(String),
     Tick,
     Shutdown,
 }

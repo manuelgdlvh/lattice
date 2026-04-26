@@ -23,7 +23,7 @@ use parking_lot::Mutex;
 use tokio::sync::broadcast;
 use tracing::{debug, warn};
 
-use lattice_core::ids::{ProjectId, RunId, TaskId, TemplateId};
+use lattice_core::ids::{TaskId, TemplateId};
 
 use crate::error::{StoreError, StoreResult};
 use crate::paths::Paths;
@@ -57,21 +57,6 @@ fn classify(paths: &Paths, path: &Path, removed: bool) -> Option<StoreEvent> {
         .collect();
 
     match components.as_slice() {
-        // projects/<id>/project.toml
-        [top, id, leaf] if *top == "projects" && *leaf == "project.toml" => {
-            let id: ProjectId = parse_id(id)?;
-            Some(if removed {
-                StoreEvent::ProjectRemoved(id)
-            } else {
-                StoreEvent::ProjectChanged(id)
-            })
-        }
-        // Project dir deleted wholesale (no leaf).
-        [top, id] if *top == "projects" && removed => {
-            let id: ProjectId = parse_id(id)?;
-            Some(StoreEvent::ProjectRemoved(id))
-        }
-
         // templates/<id>/template.toml
         [top, id, leaf] if *top == "templates" && *leaf == "template.toml" => {
             let id: TemplateId = parse_id(id)?;
@@ -86,43 +71,18 @@ fn classify(paths: &Paths, path: &Path, removed: bool) -> Option<StoreEvent> {
             Some(StoreEvent::TemplateRemoved(id))
         }
 
-        // tasks/<project>/<task>/task.toml
-        [top, project, task, leaf] if *top == "tasks" && *leaf == "task.toml" => {
-            let project: ProjectId = parse_id(project)?;
+        // tasks/<task>/task.toml
+        [top, task, leaf] if *top == "tasks" && *leaf == "task.toml" => {
             let task: TaskId = parse_id(task)?;
             Some(if removed {
-                StoreEvent::TaskRemoved { project, task }
+                StoreEvent::TaskRemoved(task)
             } else {
-                StoreEvent::TaskChanged { project, task }
+                StoreEvent::TaskChanged(task)
             })
         }
-        [top, project, task] if *top == "tasks" && removed => {
-            let project: ProjectId = parse_id(project)?;
+        [top, task] if *top == "tasks" && removed => {
             let task: TaskId = parse_id(task)?;
-            Some(StoreEvent::TaskRemoved { project, task })
-        }
-
-        // runs/<project>/<run>/run.toml
-        [top, project, run, leaf] if *top == "runs" && *leaf == "run.toml" => {
-            let project: ProjectId = parse_id(project)?;
-            let run: RunId = parse_id(run)?;
-            Some(if removed {
-                StoreEvent::RunRemoved { project, run }
-            } else {
-                StoreEvent::RunChanged { project, run }
-            })
-        }
-        [top, project, run] if *top == "runs" && removed => {
-            let project: ProjectId = parse_id(project)?;
-            let run: RunId = parse_id(run)?;
-            Some(StoreEvent::RunRemoved { project, run })
-        }
-
-        // queues/<project>.toml
-        [top, leaf] if *top == "queues" => {
-            let stem = Path::new(leaf).file_stem().and_then(|s| s.to_str())?;
-            let project: ProjectId = stem.parse().ok()?;
-            Some(StoreEvent::QueueChanged(project))
+            Some(StoreEvent::TaskRemoved(task))
         }
 
         _ => None,
@@ -202,12 +162,8 @@ impl FsWatcher {
         for dir in [
             paths.state_root().to_path_buf(),
             paths.config_root().to_path_buf(),
-            paths.projects_dir(),
             paths.templates_dir(),
             paths.tasks_root(),
-            paths.runs_root(),
-            paths.queues_dir(),
-            paths.agents_dir(),
         ] {
             std::fs::create_dir_all(&dir).map_err(|e| StoreError::io(&dir, e))?;
         }
@@ -387,12 +343,12 @@ fn synthesize_from_scan(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lattice_core::entities::{Project, Template};
+    use lattice_core::entities::{Task, Template};
     use lattice_core::time::Timestamp;
     use tempfile::TempDir;
     use tokio::time::{Duration as TokioDuration, timeout};
 
-    use crate::{FileStore, Projects, SettingsStore, Templates};
+    use crate::{FileStore, SettingsStore, Tasks, Templates};
 
     fn now() -> Timestamp {
         Timestamp::parse("2026-04-24T10:00:00Z").unwrap()
@@ -421,23 +377,6 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn project_save_emits_changed_event() {
-        let cfg = TempDir::new().unwrap();
-        let state = TempDir::new().unwrap();
-        let paths = Paths::with_roots(cfg.path(), state.path());
-        let watcher = FsWatcher::start(&paths).unwrap();
-        let mut rx = watcher.subscribe();
-
-        let store = FileStore::new(paths);
-        let p = Project::new("acme", "/tmp/acme", now());
-        Projects::save(&store, &p).await.unwrap();
-
-        let expected = StoreEvent::ProjectChanged(p.id);
-        let got = recv_until(&mut rx, |e| *e == expected).await;
-        assert_eq!(got, Some(expected));
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
     async fn template_save_emits_changed_event() {
         let cfg = TempDir::new().unwrap();
         let state = TempDir::new().unwrap();
@@ -455,7 +394,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn project_delete_emits_removed_event() {
+    async fn task_save_emits_changed_event() {
         let cfg = TempDir::new().unwrap();
         let state = TempDir::new().unwrap();
         let paths = Paths::with_roots(cfg.path(), state.path());
@@ -463,22 +402,12 @@ mod tests {
         let mut rx = watcher.subscribe();
 
         let store = FileStore::new(paths);
-        let p = Project::new("acme", "/tmp/acme", now());
-        Projects::save(&store, &p).await.unwrap();
-        // Drain the `Changed` event first.
-        let _ = recv_until(&mut rx, |e| matches!(e, StoreEvent::ProjectChanged(_))).await;
+        let task = Task::new(TemplateId::new(), 1, "t", now());
+        Tasks::save(&store, &task).await.unwrap();
 
-        Projects::delete(&store, p.id).await.unwrap();
-        let got = recv_until(
-            &mut rx,
-            |e| matches!(e, StoreEvent::ProjectRemoved(id) if *id == p.id),
-        )
-        .await;
-        assert!(
-            got.is_some(),
-            "expected a ProjectRemoved({}), got none in time",
-            p.id
-        );
+        let expected = StoreEvent::TaskChanged(task.id);
+        let got = recv_until(&mut rx, |e| *e == expected).await;
+        assert_eq!(got, Some(expected));
     }
 
     #[tokio::test(flavor = "multi_thread")]

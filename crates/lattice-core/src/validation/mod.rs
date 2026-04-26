@@ -66,9 +66,8 @@ fn build_context(template: &Template, task: &Task) -> JValue {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::entities::TaskStatus;
     use crate::fields::{Field, FieldKind, FieldOptions, OptionItem, Validation};
-    use crate::ids::{ProjectId, TemplateId};
+    use crate::ids::TemplateId;
     use crate::time::Timestamp;
     use serde_json::json;
 
@@ -116,15 +115,7 @@ mod tests {
     }
 
     fn task_for(template: &Template) -> Task {
-        let mut task = Task::new(
-            ProjectId::new(),
-            TemplateId::new(),
-            template.version,
-            "t",
-            now(),
-        );
-        task.status = TaskStatus::Draft;
-        task
+        Task::new(TemplateId::new(), template.version, "t", now())
     }
 
     #[test]

@@ -5,7 +5,7 @@
 //! and snapshot the output. Any accidental change to the renderer,
 //! filters, or field-value formatting surfaces here.
 
-use lattice_core::entities::{Project, Task, TaskStatus, Template};
+use lattice_core::entities::{Task, Template};
 use lattice_core::prompt::render;
 use lattice_core::time::Timestamp;
 
@@ -13,25 +13,10 @@ fn frozen_now() -> Timestamp {
     Timestamp::parse("2026-04-24T12:00:00Z").unwrap()
 }
 
-fn project() -> Project {
-    let now = Timestamp::parse("2026-04-24T10:00:00Z").unwrap();
-    let mut p = Project::new("acme-backend", "/home/manu/code/acme-backend", now);
-    p.id = lattice_core::ids::ProjectId::nil();
-    p.description = "Payments gateway".into();
-    p
-}
-
 fn task_for(template: &Template, values: serde_json::Value) -> Task {
     let now = Timestamp::parse("2026-04-24T10:30:00Z").unwrap();
-    let mut t = Task::new(
-        project().id,
-        template.id,
-        template.version,
-        "bug: fix rate limiter",
-        now,
-    );
+    let mut t = Task::new(template.id, template.version, "bug: fix rate limiter", now);
     t.id = lattice_core::ids::TaskId::nil();
-    t.status = TaskStatus::Draft;
     if let serde_json::Value::Object(map) = values {
         for (k, v) in map {
             t.fields.insert(k, v);
@@ -62,7 +47,7 @@ fn bug_fix_template_renders() {
         }),
     );
 
-    let out = render(&template, &task, &project(), frozen_now()).expect("render ok");
+    let out = render(&template, &task, frozen_now()).expect("render ok");
     insta::assert_snapshot!("bug_fix_render", out);
 }
 
@@ -89,6 +74,6 @@ fn prompt_renders_for_minimal_template() {
     );
     let task = task_for(&template, serde_json::json!({ "goal": "ship it" }));
 
-    let out = render(&template, &task, &project(), frozen_now()).expect("render ok");
+    let out = render(&template, &task, frozen_now()).expect("render ok");
     insta::assert_snapshot!("minimal_prompt_render", out);
 }

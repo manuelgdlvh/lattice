@@ -1,8 +1,8 @@
 //! Path resolution for lattice's on-disk layout.
 //!
-//! - **config root** — user-editable TOML (settings, agent manifests)
+//! - **config root** — user-editable TOML (settings)
 //!   - Linux:   `$XDG_CONFIG_HOME/lattice` (defaults to `~/.config/lattice`)
-//! - **state root** — app-owned state (projects, templates, tasks, runs, queues)
+//! - **state root** — app-owned state (templates, tasks)
 //!   - Linux:   `$XDG_STATE_HOME/lattice` (defaults to `~/.local/state/lattice`)
 //!   - *Note*: `directories` crate uses `data_dir()` for state. We use its value as
 //!     our `state_root`. That lands at `~/.local/share/lattice` on Linux, which
@@ -24,13 +24,9 @@ use crate::error::{StoreError, StoreResult};
 /// ```text
 /// config_root/
 ///   settings.toml
-///   agents/<agent_id>.toml
 /// state_root/
-///   projects/<project_id>/project.toml
 ///   templates/<template_id>/template.toml
-///   tasks/<project_id>/<task_id>/{task.toml, template.snapshot.toml, prompt.md}
-///   runs/<project_id>/<run_id>/{run.toml, exit.toml, stdout.log, stderr.log}
-///   queues/<project_id>.toml
+///   tasks/<task_id>/{task.toml, template.snapshot.toml, prompt.md}
 ///   cache/           (opaque: LRU spill, if ever needed)
 ///   logs/lattice.log
 ///   tmp/             (atomic-write staging)
@@ -85,22 +81,6 @@ impl Paths {
         self.config_root.join("settings.toml")
     }
 
-    pub fn agents_dir(&self) -> PathBuf {
-        self.config_root.join("agents")
-    }
-
-    pub fn projects_dir(&self) -> PathBuf {
-        self.state_root.join("projects")
-    }
-
-    pub fn project_dir(&self, project_id: &str) -> PathBuf {
-        self.projects_dir().join(project_id)
-    }
-
-    pub fn project_file(&self, project_id: &str) -> PathBuf {
-        self.project_dir(project_id).join("project.toml")
-    }
-
     pub fn templates_dir(&self) -> PathBuf {
         self.state_root.join("templates")
     }
@@ -117,61 +97,20 @@ impl Paths {
         self.state_root.join("tasks")
     }
 
-    pub fn tasks_dir(&self, project_id: &str) -> PathBuf {
-        self.tasks_root().join(project_id)
+    pub fn task_dir(&self, task_id: &str) -> PathBuf {
+        self.tasks_root().join(task_id)
     }
 
-    pub fn task_dir(&self, project_id: &str, task_id: &str) -> PathBuf {
-        self.tasks_dir(project_id).join(task_id)
+    pub fn task_file(&self, task_id: &str) -> PathBuf {
+        self.task_dir(task_id).join("task.toml")
     }
 
-    pub fn task_file(&self, project_id: &str, task_id: &str) -> PathBuf {
-        self.task_dir(project_id, task_id).join("task.toml")
+    pub fn task_template_snapshot(&self, task_id: &str) -> PathBuf {
+        self.task_dir(task_id).join("template.snapshot.toml")
     }
 
-    pub fn task_template_snapshot(&self, project_id: &str, task_id: &str) -> PathBuf {
-        self.task_dir(project_id, task_id)
-            .join("template.snapshot.toml")
-    }
-
-    pub fn task_prompt(&self, project_id: &str, task_id: &str) -> PathBuf {
-        self.task_dir(project_id, task_id).join("prompt.md")
-    }
-
-    pub fn runs_root(&self) -> PathBuf {
-        self.state_root.join("runs")
-    }
-
-    pub fn runs_dir(&self, project_id: &str) -> PathBuf {
-        self.runs_root().join(project_id)
-    }
-
-    pub fn run_dir(&self, project_id: &str, run_id: &str) -> PathBuf {
-        self.runs_dir(project_id).join(run_id)
-    }
-
-    pub fn run_file(&self, project_id: &str, run_id: &str) -> PathBuf {
-        self.run_dir(project_id, run_id).join("run.toml")
-    }
-
-    pub fn run_exit_file(&self, project_id: &str, run_id: &str) -> PathBuf {
-        self.run_dir(project_id, run_id).join("exit.toml")
-    }
-
-    pub fn run_stdout(&self, project_id: &str, run_id: &str) -> PathBuf {
-        self.run_dir(project_id, run_id).join("stdout.log")
-    }
-
-    pub fn run_stderr(&self, project_id: &str, run_id: &str) -> PathBuf {
-        self.run_dir(project_id, run_id).join("stderr.log")
-    }
-
-    pub fn queues_dir(&self) -> PathBuf {
-        self.state_root.join("queues")
-    }
-
-    pub fn queue_file(&self, project_id: &str) -> PathBuf {
-        self.queues_dir().join(format!("{project_id}.toml"))
+    pub fn task_prompt(&self, task_id: &str) -> PathBuf {
+        self.task_dir(task_id).join("prompt.md")
     }
 
     pub fn tmp_dir(&self) -> PathBuf {
@@ -195,25 +134,14 @@ mod tests {
         let paths = Paths::with_roots(cfg.path(), state.path());
 
         assert_eq!(paths.settings_file(), cfg.path().join("settings.toml"));
-        assert_eq!(paths.agents_dir(), cfg.path().join("agents"));
-        assert_eq!(paths.projects_dir(), state.path().join("projects"));
-        assert_eq!(
-            paths.project_file("P1"),
-            state.path().join("projects/P1/project.toml")
-        );
         assert_eq!(
             paths.template_file("T1"),
             state.path().join("templates/T1/template.toml")
         );
         assert_eq!(
-            paths.task_file("P1", "K1"),
-            state.path().join("tasks/P1/K1/task.toml")
+            paths.task_file("K1"),
+            state.path().join("tasks/K1/task.toml")
         );
-        assert_eq!(
-            paths.run_file("P1", "R1"),
-            state.path().join("runs/P1/R1/run.toml")
-        );
-        assert_eq!(paths.queue_file("P1"), state.path().join("queues/P1.toml"));
         assert_eq!(paths.tmp_dir(), state.path().join("tmp"));
         assert_eq!(paths.logs_dir(), state.path().join("logs"));
     }

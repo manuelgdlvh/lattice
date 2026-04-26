@@ -8,8 +8,7 @@
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 
-use lattice_core::entities::{Project, Task, Template};
-use lattice_core::ids::{ProjectId, TemplateId};
+use lattice_core::entities::{Task, Template};
 use lattice_core::time::Timestamp;
 use lattice_tui::{Model, Screen};
 
@@ -33,47 +32,23 @@ fn render(model: &Model) -> String {
 fn populated_model() -> Model {
     let now = Timestamp::parse("2026-04-24T10:00:00Z").unwrap();
     let mut m = Model::new();
-    let p1 = Project::new("example", "/tmp/example", now);
-    let p2 = Project::new("other", "/tmp/other", now);
     let tpl = Template::new("refactor", now);
-    let pid = p1.id;
     let tid = tpl.id;
-    m.projects = vec![p1, p2];
     m.templates = vec![tpl];
-    m.selected_project = Some(pid);
     m.selected_template = Some(tid);
-    let t = Task::new(pid, tid, 1, "fix auth bug", now);
-    m.tasks_by_project.insert(pid, vec![t]);
+    let t = Task::new(tid, 1, "fix auth bug", now);
+    m.tasks = vec![t];
     m
 }
 
 #[test]
 fn every_screen_renders_without_panic() {
     let mut m = populated_model();
-    for screen in [
-        Screen::Projects,
-        Screen::Templates,
-        Screen::Tasks,
-        Screen::Runtime,
-        Screen::History,
-        Screen::Info,
-        Screen::Help,
-    ] {
+    for screen in [Screen::Templates, Screen::Tasks, Screen::Info, Screen::Help] {
         m.screen = screen;
         let s = render(&m);
         assert!(s.contains("lattice"), "missing title on {screen:?}");
     }
-}
-
-#[test]
-fn projects_screen_shows_selected_project() {
-    let mut m = populated_model();
-    m.screen = Screen::Projects;
-    let s = render(&m);
-    assert!(
-        s.contains("example"),
-        "missing project name in render:\n{s}"
-    );
 }
 
 #[test]
@@ -82,7 +57,10 @@ fn palette_overlay_lists_candidates() {
     m.palette_open = true;
     m.palette_input = "new".into();
     let s = render(&m);
-    assert!(s.contains("New Project"), "palette missing candidate:\n{s}");
+    assert!(
+        s.contains("New Template"),
+        "palette missing candidate:\n{s}"
+    );
 }
 
 #[test]
@@ -90,16 +68,16 @@ fn form_overlay_renders_focused_field() {
     use lattice_tui::model::{FormField, FormState, FormSubmit};
     let mut m = populated_model();
     m.form = Some(FormState {
-        title: "New project".into(),
+        title: "New template".into(),
         fields: vec![
             FormField::plain("Name", "acme", true, false),
-            FormField::plain("Path", "/tmp/acme", true, false),
+            FormField::plain("Fields (TOML)", "", false, true),
         ],
         cursor: 0,
-        submit: FormSubmit::CreateProject,
+        submit: FormSubmit::CreateTemplate,
     });
     let s = render(&m);
-    assert!(s.contains("New project"), "form title missing:\n{s}");
+    assert!(s.contains("New template"), "form title missing:\n{s}");
     assert!(s.contains("acme"), "focused value missing:\n{s}");
 }
 
@@ -115,6 +93,4 @@ fn help_screen_lists_global_keys() {
     );
 }
 
-// Silence warnings about unused helpers in subsets of the tests.
-#[allow(dead_code)]
-fn _silence(_p: ProjectId, _t: TemplateId) {}
+// (no extra helpers)

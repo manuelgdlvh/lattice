@@ -1,12 +1,11 @@
-//! Settings screen: read-only view of app-wide preferences + the
-//! list of detected agents.
+//! Settings screen: read-only view of app-wide preferences.
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
 use crate::model::{Model, Msg};
 
@@ -14,7 +13,7 @@ pub fn handle_key(_model: &Model, key: KeyEvent) -> Option<Msg> {
     // No-op for now; settings.toml is user-editable on disk.
     match key.code {
         KeyCode::Char('r') => {
-            // Reload detection in the future; no-op for v0.1.
+            // Reserved for future refresh actions; no-op for now.
             None
         }
         _ => None,
@@ -24,11 +23,7 @@ pub fn handle_key(_model: &Model, key: KeyEvent) -> Option<Msg> {
 pub fn draw(frame: &mut Frame<'_>, area: Rect, model: &Model) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(7),
-            Constraint::Length(13),
-            Constraint::Min(0),
-        ])
+        .constraints([Constraint::Length(7), Constraint::Min(0)])
         .split(area);
 
     let top_lines = vec![
@@ -48,7 +43,7 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, model: &Model) {
             ),
         ]),
         Line::from(Span::styled(
-            "Edit `settings.toml` on disk and restart to apply. Press `r` to refresh agents.",
+            "Edit `settings.toml` on disk and restart to apply.",
             Style::default().fg(Color::DarkGray),
         )),
     ];
@@ -86,36 +81,4 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, model: &Model) {
         .wrap(Wrap { trim: false })
         .block(Block::default().borders(Borders::ALL).title(" Fields "));
     frame.render_widget(p, chunks[1]);
-
-    let items: Vec<ListItem<'_>> = model
-        .available_agents
-        .iter()
-        .map(|a| {
-            let status = if a.installed {
-                Span::styled("installed", Style::default().fg(Color::Green))
-            } else {
-                Span::styled("not found ", Style::default().fg(Color::Red))
-            };
-            let ver = a
-                .version
-                .as_deref()
-                .map_or(String::new(), |v| format!("  v{v}"));
-            let warn = a
-                .detection_warning
-                .as_deref()
-                .map_or(String::new(), |w| format!("  ({w})"));
-            ListItem::new(Line::from(vec![
-                Span::styled(format!("{:<24}", a.manifest.display_name), Style::default()),
-                status,
-                Span::raw(ver),
-                Span::styled(warn, Style::default().fg(Color::Yellow)),
-            ]))
-        })
-        .collect();
-    let list = List::new(items).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title(format!(" Agents ({}) ", model.available_agents.len())),
-    );
-    frame.render_widget(list, chunks[2]);
 }

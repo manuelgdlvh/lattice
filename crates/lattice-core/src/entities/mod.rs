@@ -1,16 +1,10 @@
-//! Domain entities: `Project`, `Template`, `Task`, `Run`, `Queue`,
-//! `Settings`. All are plain data types; no I/O.
+//! Domain entities: `Template`, `Task`, `Settings`.
+//! All are plain data types; no I/O.
 
-mod project;
-mod queue;
-mod run;
 mod settings;
 mod task;
 mod template;
 
-pub use project::*;
-pub use queue::*;
-pub use run::*;
 pub use settings::*;
 pub use task::*;
 pub use template::*;

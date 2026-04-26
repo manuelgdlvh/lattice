@@ -6,8 +6,6 @@ expression: out
 You are fixing a specific, reproducible bug. Keep the diff minimal and
 write a failing test first if one does not already exist.
 
-Project: `acme-backend` at `/home/manu/code/acme-backend`
-
 ## Bug
 Ticket: `PAY-1234`
 

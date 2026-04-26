@@ -41,13 +41,16 @@ pub(crate) fn default_templates(now: Timestamp) -> Vec<Template> {
     ];
     t.prompt = PromptSpec {
         template: r#"## Role
-You are an autonomous senior engineer working in `{{ project.path }}`.
+You are an autonomous senior engineer working on this repository.
+- Prefer small, correct diffs over large rewrites.
+- Keep changes aligned with existing patterns, naming, and formatting.
+- If there is ambiguity, pick the most reasonable approach and document the assumption in the final delivery.
 
 ## Goal
-{{ task.fields.description | quote }}
+{{ task.fields.description }}
 
 ## Sequence diagrams (source of truth)
-{{ task.fields.diagrams | sequence_gram }}
+{{ task.fields.diagrams }}
 
 ## Working mode (autonomous)
 - Do not ask the user for feedback or ask intermediate questions; execute end-to-end.

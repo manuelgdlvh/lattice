@@ -39,8 +39,6 @@ template = """
 You are fixing a specific, reproducible bug. Keep the diff minimal and
 write a failing test first if one does not already exist.
 
-Project: `{{ project.name }}` at `{{ project.path }}`
-
 ## Bug
 Ticket: `{{ task.fields.ticket }}`
 

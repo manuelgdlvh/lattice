@@ -4,44 +4,28 @@
 //! never touches crossterm or ratatui. That lets us test state
 //! transitions without a terminal.
 
-use std::collections::BTreeMap;
-
-use lattice_agents::{AvailableAgent, RunningRun};
-use lattice_core::entities::{Project, Run, Task, TaskStatus, Template};
+use lattice_core::entities::{Task, Template};
 use lattice_core::fields::FieldKind;
-use lattice_core::ids::{AgentId, ProjectId, RunId, TaskId, TemplateId};
+use lattice_core::ids::{TaskId, TemplateId};
 
 use crate::toast::{Toast, ToastLevel};
 
 /// Top-level screens, in tab order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Screen {
-    Projects,
     Templates,
     Tasks,
-    Runtime,
-    History,
     Info,
     Help,
 }
 
 impl Screen {
-    pub const TABS: &'static [Screen] = &[
-        Screen::Projects,
-        Screen::Templates,
-        Screen::Tasks,
-        Screen::Runtime,
-        Screen::History,
-        Screen::Info,
-    ];
+    pub const TABS: &'static [Screen] = &[Screen::Templates, Screen::Tasks, Screen::Info];
 
     pub fn label(self) -> &'static str {
         match self {
-            Self::Projects => "Projects",
             Self::Templates => "Templates",
             Self::Tasks => "Tasks",
-            Self::Runtime => "Runtime",
-            Self::History => "History",
             Self::Info => "Info",
             Self::Help => "Help",
         }
@@ -55,39 +39,16 @@ pub struct Model {
     pub prev_screen: Screen,
     pub quitting: bool,
 
-    /// Currently-selected project, the "focus" for Tasks/Runtime/History.
-    pub selected_project: Option<ProjectId>,
     pub selected_template: Option<TemplateId>,
-
-    pub projects: Vec<Project>,
-    pub project_cursor: usize,
 
     pub templates: Vec<Template>,
     pub template_cursor: usize,
 
-    /// All loaded tasks indexed by project, flattened for the Tasks
-    /// screen's filtered view.
-    pub tasks_by_project: BTreeMap<ProjectId, Vec<Task>>,
+    pub tasks: Vec<Task>,
     pub task_cursor: usize,
     pub task_multi_select: Vec<TaskId>,
-
-    pub runs_by_project: BTreeMap<ProjectId, Vec<Run>>,
-    pub run_cursor: usize,
-    /// Cached tails for the currently-highlighted run on the History screen.
-    /// Populated by `Cmd::LoadHistoryLogs`.
-    pub history_run: Option<RunId>,
-    pub history_stdout_tail: Vec<String>,
-    pub history_stderr_tail: Vec<String>,
-
-    pub available_agents: Vec<AvailableAgent>,
-
-    /// Currently-running runs keyed by `RunId`.
-    pub running: BTreeMap<RunId, RunningRun>,
-    pub runtime_cursor: usize,
-
-    /// Live tail buffer for the inspected run on the Runtime screen.
-    pub inspect_run: Option<RunId>,
-    pub inspect_tail: Vec<String>,
+    /// Scroll offset for the Tasks screen prompt preview pane.
+    pub task_prompt_scroll: usize,
 
     pub toasts: Vec<Toast>,
     pub status_message: Option<String>,
@@ -362,13 +323,11 @@ fn column_to_offset(s: &str, line_start: usize, line_end: usize, target_col: usi
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FormSubmit {
-    CreateProject,
-    EditProject(ProjectId),
     CreateTemplate,
     EditTemplate(TemplateId),
-    CreateTask(ProjectId, TemplateId),
-    EditTask(ProjectId, TaskId),
-    SaveTaskPromptToFile(ProjectId, TaskId),
+    CreateTask(TemplateId),
+    EditTask(TaskId),
+    SaveTaskPromptToFile(TaskId),
 }
 
 impl Default for Model {
@@ -380,28 +339,16 @@ impl Default for Model {
 impl Model {
     pub fn new() -> Self {
         Self {
-            screen: Screen::Projects,
-            prev_screen: Screen::Projects,
+            screen: Screen::Templates,
+            prev_screen: Screen::Templates,
             quitting: false,
-            selected_project: None,
             selected_template: None,
-            projects: Vec::new(),
-            project_cursor: 0,
             templates: Vec::new(),
             template_cursor: 0,
-            tasks_by_project: BTreeMap::new(),
+            tasks: Vec::new(),
             task_cursor: 0,
             task_multi_select: Vec::new(),
-            runs_by_project: BTreeMap::new(),
-            run_cursor: 0,
-            history_run: None,
-            history_stdout_tail: Vec::new(),
-            history_stderr_tail: Vec::new(),
-            available_agents: Vec::new(),
-            running: BTreeMap::new(),
-            runtime_cursor: 0,
-            inspect_run: None,
-            inspect_tail: Vec::new(),
+            task_prompt_scroll: 0,
             toasts: Vec::new(),
             status_message: None,
             palette_open: false,
@@ -415,33 +362,10 @@ impl Model {
     }
 
     pub fn tasks_for_selected_project(&self) -> &[Task] {
-        self.selected_project
-            .and_then(|p| self.tasks_by_project.get(&p).map(Vec::as_slice))
-            .unwrap_or(&[])
+        &self.tasks
     }
 
-    pub fn runs_for_selected_project(&self) -> &[Run] {
-        self.selected_project
-            .and_then(|p| self.runs_by_project.get(&p).map(Vec::as_slice))
-            .unwrap_or(&[])
-    }
-
-    /// If a project is selected on the Projects screen, pick it up.
     pub fn ensure_selection_consistency(&mut self) {
-        if self.selected_project.is_none()
-            && !self.projects.is_empty()
-            && self.project_cursor < self.projects.len()
-        {
-            self.selected_project = Some(self.projects[self.project_cursor].id);
-        }
-        if let Some(pid) = self.selected_project
-            && !self.projects.iter().any(|p| p.id == pid)
-        {
-            self.selected_project = self.projects.first().map(|p| p.id);
-        }
-        self.project_cursor = self
-            .project_cursor
-            .min(self.projects.len().saturating_sub(1));
         self.template_cursor = self
             .template_cursor
             .min(self.templates.len().saturating_sub(1));
@@ -473,37 +397,11 @@ pub enum Msg {
     CancelConfirm,
 
     // data snapshot updates -------------------------------------------
-    SetProjects(Vec<Project>),
     SetTemplates(Vec<Template>),
-    SetTasks(ProjectId, Vec<Task>),
-    SetRuns(ProjectId, Vec<Run>),
-    SetAgents(Vec<AvailableAgent>),
-    SetRunning(Vec<RunningRun>),
-    AppendInspectLine(String),
-    /// Replace cached History tails for `run_id`.
-    SetHistoryLogs {
-        run_id: RunId,
-        stdout_tail: Vec<String>,
-        stderr_tail: Vec<String>,
-    },
+    SetTasks(Vec<Task>),
     ToastInfo(String),
     ToastWarn(String),
     ToastError(String),
-
-    // projects --------------------------------------------------------
-    ProjectCursor(isize),
-    SelectProject(ProjectId),
-    /// Convenience: set `selected_project` and jump to the Tasks tab,
-    /// with a confirmation toast. Emitted from the Projects screen's
-    /// `Enter` key so users have a one-step way to pick the target
-    /// project their subsequent actions apply to.
-    SelectAndGoToTasks(ProjectId),
-    /// Open a picker to change the currently-selected project from
-    /// anywhere (today: the Tasks screen's `p` key).
-    OpenProjectPicker,
-    OpenCreateProject,
-    OpenEditProject(ProjectId),
-    DeleteProject(ProjectId),
 
     // templates -------------------------------------------------------
     TemplateCursor(isize),
@@ -513,27 +411,22 @@ pub enum Msg {
 
     // tasks -----------------------------------------------------------
     TaskCursor(isize),
+    TaskPromptScroll(isize),
     ToggleTaskSelection(TaskId),
     OpenCreateTask,
     /// Open the task-creation form for a specific template, bypassing
     /// the picker. Used both as the picker's accept message and from
     /// the Templates screen where a template is already in focus.
     OpenCreateTaskWith(TemplateId),
-    OpenEditTask(ProjectId, TaskId),
-    OpenSaveTaskPrompt(ProjectId, TaskId),
+    OpenEditTask(TaskId),
+    OpenSaveTaskPrompt(TaskId),
     // Generic picker overlay. Items each carry their own accept Msg,
     // so the picker itself is reusable for templates, projects, agents,
     // etc.
     PickerMove(isize),
     PickerAccept,
     PickerCancel,
-    DeleteTask(ProjectId, TaskId),
-    /// User-initiated dispatch ("x" on the Tasks screen). Branches on
-    /// what's available: no task selected → warn toast, no installed
-    /// agent → actionable toast, 1 agent → dispatch directly, >1
-    /// agent → open the agent picker.
-    RequestDispatch,
-    DispatchSelected(AgentId),
+    DeleteTask(TaskId),
 
     // forms -----------------------------------------------------------
     FormInputChar(char),
@@ -571,19 +464,9 @@ pub enum Msg {
     SeqEdStartRenameDiagram,
     SeqEdDeleteDiagram,
 
-    // runtime ---------------------------------------------------------
-    RuntimeCursor(isize),
-    InspectRun(RunId),
-    KillRun(RunId),
-
-    // history ---------------------------------------------------------
-    RunCursor(isize),
-
     // results from async actions --------------------------------------
-    ConfirmDeleteProject(ProjectId),
     ConfirmDeleteTemplate(TemplateId),
-    ConfirmDeleteTask(ProjectId, TaskId),
-    ConfirmKill(RunId),
+    ConfirmDeleteTask(TaskId),
 }
 
 /// Pure state transition. No I/O. Returns an optional "command" the
@@ -597,15 +480,7 @@ pub fn update(model: &mut Model, msg: Msg) -> Option<Cmd> {
         Msg::GoScreen(s) => {
             model.prev_screen = model.screen;
             model.screen = s;
-            if matches!(model.screen, Screen::History) {
-                let run_id = model
-                    .runs_for_selected_project()
-                    .get(model.run_cursor)
-                    .map(|r| r.id);
-                run_id.map(Cmd::LoadHistoryLogs)
-            } else {
-                None
-            }
+            None
         }
         Msg::NextTab => {
             let idx = Screen::TABS
@@ -665,7 +540,7 @@ pub fn update(model: &mut Model, msg: Msg) -> Option<Cmd> {
         }
         Msg::DismissToast => {
             if !model.toasts.is_empty() {
-                model.toasts.remove(0);
+                model.toasts.pop();
             }
             None
         }
@@ -680,63 +555,17 @@ pub fn update(model: &mut Model, msg: Msg) -> Option<Cmd> {
             None
         }
 
-        Msg::SetProjects(v) => {
-            model.projects = v;
-            model.ensure_selection_consistency();
-            None
-        }
         Msg::SetTemplates(v) => {
             model.templates = v;
             model.ensure_selection_consistency();
             None
         }
-        Msg::SetTasks(pid, v) => {
-            model.tasks_by_project.insert(pid, v);
+        Msg::SetTasks(v) => {
+            model.tasks = v;
             // Clamp cursor after refresh so keybinds don't silently no-op
             // when the list shrinks (e.g. after delete or external change).
             let len = model.tasks_for_selected_project().len();
             model.task_cursor = model.task_cursor.min(len.saturating_sub(1));
-            None
-        }
-        Msg::SetRuns(pid, v) => {
-            model.runs_by_project.insert(pid, v);
-            // Clamp cursor after refresh; if History is visible, also refresh tails.
-            let len = model.runs_for_selected_project().len();
-            model.run_cursor = model.run_cursor.min(len.saturating_sub(1));
-            if matches!(model.screen, Screen::History) {
-                let run_id = model
-                    .runs_for_selected_project()
-                    .get(model.run_cursor)
-                    .map(|r| r.id);
-                return run_id.map(Cmd::LoadHistoryLogs);
-            }
-            None
-        }
-        Msg::SetAgents(v) => {
-            model.available_agents = v;
-            None
-        }
-        Msg::SetRunning(list) => {
-            model.running = list.into_iter().map(|r| (r.run_id, r)).collect();
-            None
-        }
-        Msg::AppendInspectLine(line) => {
-            model.inspect_tail.push(line);
-            // Cap the in-memory tail to something sane.
-            if model.inspect_tail.len() > 5_000 {
-                let drop = model.inspect_tail.len() - 5_000;
-                model.inspect_tail.drain(0..drop);
-            }
-            None
-        }
-        Msg::SetHistoryLogs {
-            run_id,
-            stdout_tail,
-            stderr_tail,
-        } => {
-            model.history_run = Some(run_id);
-            model.history_stdout_tail = stdout_tail;
-            model.history_stderr_tail = stderr_tail;
             None
         }
         Msg::ToastInfo(t) => {
@@ -749,112 +578,6 @@ pub fn update(model: &mut Model, msg: Msg) -> Option<Cmd> {
         }
         Msg::ToastError(t) => {
             model.toasts.push(Toast::new(ToastLevel::Error, t));
-            None
-        }
-
-        Msg::ProjectCursor(d) => {
-            move_cursor(&mut model.project_cursor, d, model.projects.len());
-            if let Some(p) = model.projects.get(model.project_cursor) {
-                model.selected_project = Some(p.id);
-            }
-            None
-        }
-        Msg::SelectProject(id) => {
-            model.selected_project = Some(id);
-            None
-        }
-        Msg::SelectAndGoToTasks(id) => {
-            model.selected_project = Some(id);
-            let name = model
-                .projects
-                .iter()
-                .find(|p| p.id == id)
-                .map(|p| p.name.clone());
-            model.prev_screen = model.screen;
-            model.screen = Screen::Tasks;
-            if let Some(name) = name {
-                model.toasts.push(Toast::new(
-                    ToastLevel::Info,
-                    format!("targeting project \"{name}\""),
-                ));
-            }
-            None
-        }
-        Msg::OpenProjectPicker => {
-            if model.projects.is_empty() {
-                model.toasts.push(Toast::new(
-                    ToastLevel::Warn,
-                    "no projects yet (press n on the Projects tab)",
-                ));
-                return None;
-            }
-            let current = model.selected_project;
-            let items: Vec<PickerItem> = model
-                .projects
-                .iter()
-                .map(|p| {
-                    let tag = if Some(p.id) == current { "● " } else { "  " };
-                    PickerItem {
-                        label: format!("{tag}{}  ({})", p.name, p.path.to_string_lossy()),
-                        accept: Msg::SelectAndGoToTasks(p.id),
-                    }
-                })
-                .collect();
-            let cursor = current
-                .and_then(|id| model.projects.iter().position(|p| p.id == id))
-                .unwrap_or(model.project_cursor.min(items.len().saturating_sub(1)));
-            model.picker = Some(Picker {
-                title: "Pick target project".into(),
-                items,
-                cursor,
-            });
-            None
-        }
-        Msg::OpenCreateProject => {
-            model.form = Some(FormState {
-                title: "New project".into(),
-                fields: vec![
-                    FormField::plain("Name", "", true, false),
-                    FormField::plain("Path", "", true, false),
-                    FormField::plain("Description", "", false, true),
-                ],
-                cursor: 0,
-                submit: FormSubmit::CreateProject,
-            });
-            None
-        }
-        Msg::OpenEditProject(id) => {
-            let proj = model.projects.iter().find(|p| p.id == id).cloned()?;
-            model.form = Some(FormState {
-                title: format!("Edit project: {}", proj.name),
-                fields: vec![
-                    FormField::plain("Name", proj.name.clone(), true, false),
-                    FormField::plain(
-                        "Path",
-                        proj.path.to_string_lossy().into_owned(),
-                        true,
-                        false,
-                    ),
-                    FormField::plain("Description", proj.description.clone(), false, true),
-                ],
-                cursor: 0,
-                submit: FormSubmit::EditProject(id),
-            });
-            None
-        }
-        Msg::DeleteProject(id) => {
-            let name = model
-                .projects
-                .iter()
-                .find(|p| p.id == id)
-                .map_or(String::from("<unknown>"), |p| p.name.clone());
-            model.confirm = Some(ConfirmPrompt {
-                title: "Delete project?".into(),
-                message: format!(
-                    "This will delete project `{name}` and all its tasks and runs. Proceed?"
-                ),
-                accept: Box::new(Msg::ConfirmDeleteProject(id)),
-            });
             None
         }
 
@@ -920,6 +643,13 @@ pub fn update(model: &mut Model, msg: Msg) -> Option<Cmd> {
         Msg::TaskCursor(d) => {
             let len = model.tasks_for_selected_project().len();
             move_cursor(&mut model.task_cursor, d, len);
+            model.task_prompt_scroll = 0;
+            None
+        }
+        Msg::TaskPromptScroll(d) => {
+            // Clamping is done in the view (based on rendered height).
+            // Here we just keep it non-negative.
+            model.task_prompt_scroll = apply_delta(model.task_prompt_scroll, d, usize::MAX);
             None
         }
         Msg::ToggleTaskSelection(id) => {
@@ -931,12 +661,6 @@ pub fn update(model: &mut Model, msg: Msg) -> Option<Cmd> {
             None
         }
         Msg::OpenCreateTask => {
-            let Some(pid) = model.selected_project else {
-                model
-                    .toasts
-                    .push(Toast::new(ToastLevel::Warn, "select a project first"));
-                return None;
-            };
             if model.templates.is_empty() {
                 model
                     .toasts
@@ -949,7 +673,7 @@ pub fn update(model: &mut Model, msg: Msg) -> Option<Cmd> {
             // not choose what to base the task on.
             if model.templates.len() == 1 {
                 let tid = model.templates[0].id;
-                open_create_task_form(model, pid, tid);
+                open_create_task_form(model, tid);
                 return None;
             }
             // Default the cursor to the currently-highlighted template
@@ -983,21 +707,12 @@ pub fn update(model: &mut Model, msg: Msg) -> Option<Cmd> {
             None
         }
         Msg::OpenCreateTaskWith(tid) => {
-            let Some(pid) = model.selected_project else {
-                model
-                    .toasts
-                    .push(Toast::new(ToastLevel::Warn, "select a project first"));
-                return None;
-            };
-            open_create_task_form(model, pid, tid);
+            open_create_task_form(model, tid);
             None
         }
-        Msg::OpenEditTask(pid, task_id) => {
+        Msg::OpenEditTask(task_id) => {
             model.picker = None;
-            let Some(tasks) = model.tasks_by_project.get(&pid) else {
-                return None;
-            };
-            let task = tasks.iter().find(|t| t.id == task_id).cloned()?;
+            let task = model.tasks.iter().find(|t| t.id == task_id).cloned()?;
 
             // We build the form from the current in-memory template schema.
             // If the template has changed since task creation, the edit UI
@@ -1036,18 +751,12 @@ pub fn update(model: &mut Model, msg: Msg) -> Option<Cmd> {
                 title,
                 fields,
                 cursor: 0,
-                submit: FormSubmit::EditTask(pid, task_id),
+                submit: FormSubmit::EditTask(task_id),
             });
             None
         }
-        Msg::OpenSaveTaskPrompt(pid, task_id) => {
-            let Some(tasks) = model.tasks_by_project.get(&pid) else {
-                model
-                    .toasts
-                    .push(Toast::new(ToastLevel::Warn, "task not found"));
-                return None;
-            };
-            let Some(task) = tasks.iter().find(|t| t.id == task_id) else {
+        Msg::OpenSaveTaskPrompt(task_id) => {
+            let Some(task) = model.tasks.iter().find(|t| t.id == task_id) else {
                 model
                     .toasts
                     .push(Toast::new(ToastLevel::Warn, "task not found"));
@@ -1062,7 +771,7 @@ pub fn update(model: &mut Model, msg: Msg) -> Option<Cmd> {
                     false,
                 )],
                 cursor: 0,
-                submit: FormSubmit::SaveTaskPromptToFile(pid, task_id),
+                submit: FormSubmit::SaveTaskPromptToFile(task_id),
             });
             None
         }
@@ -1093,76 +802,26 @@ pub fn update(model: &mut Model, msg: Msg) -> Option<Cmd> {
             model.picker = None;
             None
         }
-        Msg::DeleteTask(pid, tid) => {
+        Msg::DeleteTask(tid) => {
             model.confirm = Some(ConfirmPrompt {
                 title: "Delete task?".into(),
                 message: "Delete this task? Its prompt/snapshot will be removed.".into(),
-                accept: Box::new(Msg::ConfirmDeleteTask(pid, tid)),
+                accept: Box::new(Msg::ConfirmDeleteTask(tid)),
             });
             None
         }
-        Msg::RequestDispatch => {
-            // Guard 1: we need a target project.
-            if model.selected_project.is_none() {
-                model.toasts.push(Toast::new(
-                    ToastLevel::Warn,
-                    "no project selected — press p to pick one",
-                ));
-                return None;
-            }
-            // Guard 2: something to dispatch. Either a multi-select,
-            // or a single task under the cursor.
-            let have_task = !model.task_multi_select.is_empty()
-                || !model.tasks_for_selected_project().is_empty();
-            if !have_task {
-                model.toasts.push(Toast::new(
-                    ToastLevel::Warn,
-                    "no task to dispatch — press n to create one",
-                ));
-                return None;
-            }
-            // Guard 3: at least one installed agent.
-            let installed: Vec<_> = model
-                .available_agents
-                .iter()
-                .filter(|a| a.installed)
-                .collect();
-            if installed.is_empty() {
-                let any = !model.available_agents.is_empty();
-                let msg = if any {
-                    "no installed agent — open Settings and install one (then press r to refresh)"
-                } else {
-                    "no agents registered — check your lattice install and press r in Settings"
-                };
-                model.toasts.push(Toast::new(ToastLevel::Error, msg));
-                return None;
-            }
-            // One agent? Dispatch immediately. Several? Let the user
-            // pick so the choice is never hidden.
-            if installed.len() == 1 {
-                let agent_id = installed[0].manifest.id.clone();
-                return Some(Cmd::DispatchSelected(agent_id));
-            }
-            let items: Vec<PickerItem> = installed
-                .iter()
-                .map(|a| PickerItem {
-                    label: format!("{}  ({})", a.manifest.display_name, a.manifest.id),
-                    accept: Msg::DispatchSelected(a.manifest.id.clone()),
-                })
-                .collect();
-            model.picker = Some(Picker {
-                title: "Pick agent to dispatch".into(),
-                items,
-                cursor: 0,
-            });
-            None
-        }
-        Msg::DispatchSelected(agent_id) => Some(Cmd::DispatchSelected(agent_id)),
 
         Msg::FormInputChar(c) => {
             if let Some(f) = model.form.as_mut()
                 && let Some(field) = f.fields.get_mut(f.cursor)
             {
+                if matches!(field.kind, Some(FieldKind::SequenceGram)) {
+                    model.toasts.push(Toast::new(
+                        ToastLevel::Info,
+                        "sequence-gram is read-only here; press F3 to edit",
+                    ));
+                    return None;
+                }
                 field.insert_char(c);
             }
             None
@@ -1171,6 +830,13 @@ pub fn update(model: &mut Model, msg: Msg) -> Option<Cmd> {
             if let Some(f) = model.form.as_mut()
                 && let Some(field) = f.fields.get_mut(f.cursor)
             {
+                if matches!(field.kind, Some(FieldKind::SequenceGram)) {
+                    model.toasts.push(Toast::new(
+                        ToastLevel::Info,
+                        "sequence-gram is read-only here; press F3 to edit",
+                    ));
+                    return None;
+                }
                 field.backspace();
             }
             None
@@ -1621,38 +1287,8 @@ pub fn update(model: &mut Model, msg: Msg) -> Option<Cmd> {
             None
         }
 
-        Msg::RuntimeCursor(d) => {
-            move_cursor(&mut model.runtime_cursor, d, model.running.len());
-            None
-        }
-        Msg::InspectRun(id) => {
-            model.inspect_run = Some(id);
-            model.inspect_tail.clear();
-            Some(Cmd::SubscribeRunLogs(id))
-        }
-        Msg::KillRun(id) => {
-            model.confirm = Some(ConfirmPrompt {
-                title: "Kill run?".into(),
-                message: "Send SIGTERM (then SIGKILL after grace) to this agent?".into(),
-                accept: Box::new(Msg::ConfirmKill(id)),
-            });
-            None
-        }
-
-        Msg::RunCursor(d) => {
-            let len = model.runs_for_selected_project().len();
-            move_cursor(&mut model.run_cursor, d, len);
-            let run_id = model
-                .runs_for_selected_project()
-                .get(model.run_cursor)
-                .map(|r| r.id);
-            run_id.map(Cmd::LoadHistoryLogs)
-        }
-
-        Msg::ConfirmDeleteProject(id) => Some(Cmd::DeleteProject(id)),
         Msg::ConfirmDeleteTemplate(id) => Some(Cmd::DeleteTemplate(id)),
-        Msg::ConfirmDeleteTask(p, t) => Some(Cmd::DeleteTask(p, t)),
-        Msg::ConfirmKill(id) => Some(Cmd::KillRun(id)),
+        Msg::ConfirmDeleteTask(t) => Some(Cmd::DeleteTask(t)),
     }
 }
 
@@ -1726,71 +1362,71 @@ fn parse_sequence_gram(src: &str) -> Vec<SequenceDiagram> {
                     in_edge_context = false;
                     edge_ctx_current_id = None;
                 } else {
-                if t.is_empty() {
-                    in_edge_context = false;
-                    edge_ctx_current_id = None;
-                    continue;
-                }
-                // Lines like:
-                // - "[R1] -> some text" (preferred)
-                // - "[R1]: some text" (legacy)
-                // - "[R1]" + newline + "some text" (preferred multi-line)
-                // - "- [R1] -> some text"
-                // - "R1: some text"
-                let rest = t.trim_start_matches('-').trim();
-                let rest_unbold = rest.trim_matches('*').trim();
-                // Multi-line format: a bare "[R1]" sets the current relation id,
-                // and subsequent lines become its context until another id/fence/heading.
-                if rest_unbold.starts_with('[')
-                    && rest_unbold.ends_with(']')
-                    && !rest_unbold.contains("->")
-                {
-                    let id = rest_unbold
-                        .trim()
-                        .trim_start_matches('[')
-                        .trim_end_matches(']');
-                    if !id.is_empty() {
-                        edge_ctx_current_id = Some(id.to_string());
-                        pending_edge_contexts.entry(id.to_string()).or_default();
+                    if t.is_empty() {
+                        in_edge_context = false;
+                        edge_ctx_current_id = None;
                         continue;
                     }
-                }
-                let pair = rest_unbold
-                    .split_once("->")
-                    .or_else(|| rest.split_once(':'))
-                    .map(|(lhs, rhs)| (lhs.trim(), rhs.trim()));
-                if let Some((lhs, rhs)) = pair {
-                    let id = lhs.trim().trim_start_matches('[').trim_end_matches(']');
-                    let txt = rhs.trim();
-                    if !id.is_empty() {
-                        if txt.is_empty() {
-                            pending_edge_contexts.remove(id);
-                        } else {
-                            pending_edge_contexts.insert(id.to_string(), txt.to_string());
+                    // Lines like:
+                    // - "[R1] -> some text" (preferred)
+                    // - "[R1]: some text" (legacy)
+                    // - "[R1]" + newline + "some text" (preferred multi-line)
+                    // - "- [R1] -> some text"
+                    // - "R1: some text"
+                    let rest = t.trim_start_matches('-').trim();
+                    let rest_unbold = rest.trim_matches('*').trim();
+                    // Multi-line format: a bare "[R1]" sets the current relation id,
+                    // and subsequent lines become its context until another id/fence/heading.
+                    if rest_unbold.starts_with('[')
+                        && rest_unbold.ends_with(']')
+                        && !rest_unbold.contains("->")
+                    {
+                        let id = rest_unbold
+                            .trim()
+                            .trim_start_matches('[')
+                            .trim_end_matches(']');
+                        if !id.is_empty() {
+                            edge_ctx_current_id = Some(id.to_string());
+                            pending_edge_contexts.entry(id.to_string()).or_default();
+                            continue;
                         }
                     }
-                    edge_ctx_current_id = None;
-                    continue;
-                }
-                if let Some(id) = edge_ctx_current_id.clone() {
-                    let txt = rest;
-                    if !txt.is_empty() {
-                        pending_edge_contexts
-                            .entry(id)
-                            .and_modify(|cur| {
-                                if !cur.is_empty() {
-                                    cur.push('\n');
-                                }
-                                cur.push_str(txt);
-                            })
-                            .or_insert_with(|| txt.to_string());
+                    let pair = rest_unbold
+                        .split_once("->")
+                        .or_else(|| rest.split_once(':'))
+                        .map(|(lhs, rhs)| (lhs.trim(), rhs.trim()));
+                    if let Some((lhs, rhs)) = pair {
+                        let id = lhs.trim().trim_start_matches('[').trim_end_matches(']');
+                        let txt = rhs.trim();
+                        if !id.is_empty() {
+                            if txt.is_empty() {
+                                pending_edge_contexts.remove(id);
+                            } else {
+                                pending_edge_contexts.insert(id.to_string(), txt.to_string());
+                            }
+                        }
+                        edge_ctx_current_id = None;
                         continue;
                     }
-                }
-                // Not an edge-context mapping line; stop treating subsequent lines
-                // as part of the block.
-                in_edge_context = false;
-                edge_ctx_current_id = None;
+                    if let Some(id) = edge_ctx_current_id.clone() {
+                        let txt = rest;
+                        if !txt.is_empty() {
+                            pending_edge_contexts
+                                .entry(id)
+                                .and_modify(|cur| {
+                                    if !cur.is_empty() {
+                                        cur.push('\n');
+                                    }
+                                    cur.push_str(txt);
+                                })
+                                .or_insert_with(|| txt.to_string());
+                            continue;
+                        }
+                    }
+                    // Not an edge-context mapping line; stop treating subsequent lines
+                    // as part of the block.
+                    in_edge_context = false;
+                    edge_ctx_current_id = None;
                 }
             }
             if l.trim() == "```mermaid" {
@@ -1855,6 +1491,8 @@ fn parse_mermaid_diagram(name: &str, body: &str) -> SequenceDiagram {
         std::collections::BTreeMap::new();
     let mut in_edge_context = false;
     let mut edge_ctx_current_id: Option<String> = None;
+    let mut last_message_idx: Option<usize> = None;
+
     for line in body.lines() {
         let l = line.trim();
         if l.is_empty() || l.starts_with("```") {
@@ -1942,6 +1580,42 @@ fn parse_mermaid_diagram(name: &str, body: &str) -> SequenceDiagram {
             // If this is not a comment line and doesn't match our `id:` shape,
             // fall through so it can be parsed as a message line.
         }
+        // Mermaid notes (preferred output): attach to the previous message.
+        // Example:
+        //   Note over Alice,John: A typical interaction<br/>two lines
+        //   Note over Alice: self interaction
+        if let Some(rest) = l.strip_prefix("Note over ") {
+            if let Some((who, text)) = rest.split_once(':') {
+                let who = who.trim();
+                let text = text.trim();
+                if let Some(idx) = last_message_idx {
+                    // Convert <br/> back to literal newlines for the editor/storage.
+                    let normalized = text.replace("<br/>", "\n").trim().to_string();
+                    if !normalized.is_empty() {
+                        // Basic sanity: only attach if participants match the previous message
+                        // (prevents notes from accidentally sticking to the wrong edge).
+                        let matches = match events.get(idx) {
+                            Some(SequenceEvent::Message { from, to, .. }) => {
+                                if from == to {
+                                    who == from
+                                } else {
+                                    who == format!("{from},{to}") || who == format!("{to},{from}")
+                                }
+                            }
+                            _ => false,
+                        };
+                        if matches {
+                            if let Some(SequenceEvent::Message { edge_context, .. }) =
+                                events.get_mut(idx)
+                            {
+                                *edge_context = Some(normalized);
+                            }
+                        }
+                    }
+                }
+                continue;
+            }
+        }
         if let Some(rest) = l.strip_prefix("participant ") {
             let pname = rest.trim();
             if !pname.is_empty() && !participants.iter().any(|p| p == pname) {
@@ -2007,6 +1681,7 @@ fn parse_mermaid_diagram(name: &str, body: &str) -> SequenceDiagram {
             text: text.to_string(),
             edge_context: None,
         });
+        last_message_idx = Some(events.len().saturating_sub(1));
     }
     // Attach parsed edge context to matching rel_ids.
     for ev in &mut events {
@@ -2051,22 +1726,6 @@ fn render_sequence_gram(diagrams: &[SequenceDiagram]) -> String {
         out.push_str("## ");
         out.push_str(&d.name);
         out.push('\n');
-        // Edge context lives outside the Mermaid block so the Mermaid stays standard.
-        if !d.events.is_empty() {
-            out.push_str("**edgeContext:**\n");
-            for (idx, ev) in d.events.iter().enumerate() {
-                let SequenceEvent::Message { edge_context, .. } = ev;
-                let rel_id = format!("R{}", idx + 1);
-                out.push_str("**[");
-                out.push_str(&rel_id);
-                out.push_str("]**\n");
-                if let Some(c) = edge_context.as_deref().map(str::trim).filter(|s| !s.is_empty())
-                {
-                    out.push_str(c);
-                }
-                out.push('\n');
-            }
-        }
         out.push_str("```mermaid\n");
         out.push_str(&render_mermaid_body(&d.participants, &d.events));
         out.push_str("```\n");
@@ -2089,6 +1748,26 @@ fn next_relation_id(diag: &SequenceDiagram) -> String {
 }
 
 fn render_mermaid_body(participants: &[String], events: &[SequenceEvent]) -> String {
+    fn mermaid_text_inline(s: &str) -> String {
+        // Mermaid sequenceDiagram supports `<br/>` in messages/notes to wrap.
+        // Keep output strictly one line per Mermaid statement (no literal newlines).
+        s.replace('\n', "<br/>").trim().to_string()
+    }
+
+    fn mermaid_note_text(s: &str) -> Option<String> {
+        // Like `mermaid_text_inline`, but treat "only line breaks / whitespace" as empty
+        // so we never emit `Note ...:` with no actual content.
+        let cooked = mermaid_text_inline(s);
+        if cooked.is_empty() {
+            return None;
+        }
+        let without_breaks = cooked.replace("<br/>", "");
+        if without_breaks.trim().is_empty() {
+            return None;
+        }
+        Some(cooked)
+    }
+
     let mut out = String::new();
     out.push_str("sequenceDiagram\n");
     for p in participants {
@@ -2112,9 +1791,28 @@ fn render_mermaid_body(participants: &[String], events: &[SequenceEvent]) -> Str
                 out.push_str(arrow);
                 out.push_str(to);
                 out.push_str(": ");
-                out.push_str(text);
+                out.push_str(&mermaid_text_inline(text));
                 out.push('\n');
-                let _ = edge_context; // handled in EdgeContext block below
+                if let Some(ctx) = edge_context
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                {
+                    let Some(ctx) = mermaid_note_text(ctx) else {
+                        continue;
+                    };
+                    out.push_str("    Note over ");
+                    if from == to {
+                        out.push_str(from);
+                    } else {
+                        out.push_str(from);
+                        out.push(',');
+                        out.push_str(to);
+                    }
+                    out.push_str(": ");
+                    out.push_str(&ctx);
+                    out.push('\n');
+                }
             }
         }
     }
@@ -2127,20 +1825,11 @@ fn render_mermaid_body(participants: &[String], events: &[SequenceEvent]) -> Str
 pub enum Cmd {
     Dispatch(Msg),
     SubmitForm(FormState),
-    DispatchSelected(AgentId),
-    DeleteProject(ProjectId),
     DeleteTemplate(TemplateId),
-    DeleteTask(ProjectId, TaskId),
-    KillRun(RunId),
-    SubscribeRunLogs(RunId),
-    LoadHistoryLogs(RunId),
+    DeleteTask(TaskId),
 }
 
-// Silence unused-import warnings in no-op builds where `TaskStatus` is
-// only used through future extensions. We keep the import because
-// downstream screens need it.
-#[allow(dead_code)]
-const _TS: [TaskStatus; 0] = [];
+// (task execution removed; no task status)
 
 /// Friendly, multi-line example rendered into the `Fields (TOML)`
 /// editor when the user creates a new template. We deliberately show
@@ -2202,7 +1891,7 @@ pub fn parse_fields_toml(src: &str) -> Result<Vec<lattice_core::fields::Field>, 
 /// the model, clearing any open template picker. Extracted so both
 /// the single-template shortcut and the picker-accept branch share
 /// the same code path.
-fn open_create_task_form(model: &mut Model, pid: ProjectId, tid: TemplateId) {
+fn open_create_task_form(model: &mut Model, tid: TemplateId) {
     model.picker = None;
     let tpl = model.templates.iter().find(|t| t.id == tid).cloned();
     let title = tpl.as_ref().map_or_else(
@@ -2219,7 +1908,7 @@ fn open_create_task_form(model: &mut Model, pid: ProjectId, tid: TemplateId) {
         title,
         fields,
         cursor: 0,
-        submit: FormSubmit::CreateTask(pid, tid),
+        submit: FormSubmit::CreateTask(tid),
     });
 }
 
@@ -2266,19 +1955,18 @@ fn format_field_label(field: &lattice_core::fields::Field) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lattice_core::entities::{Project, Template};
+    use lattice_core::entities::Template;
     use lattice_core::fields::{Field, FieldKind, FieldOptions, Validation};
-    use lattice_core::ids::ProjectId;
     use lattice_core::time::Timestamp;
 
     #[test]
     fn update_tab_cycle() {
         let mut m = Model::new();
-        assert_eq!(m.screen, Screen::Projects);
-        update(&mut m, Msg::NextTab);
         assert_eq!(m.screen, Screen::Templates);
+        update(&mut m, Msg::NextTab);
+        assert_eq!(m.screen, Screen::Tasks);
         update(&mut m, Msg::PrevTab);
-        assert_eq!(m.screen, Screen::Projects);
+        assert_eq!(m.screen, Screen::Templates);
     }
 
     #[test]
@@ -2309,8 +1997,8 @@ Must be idempotent
         assert!(rendered.contains("A->>B: Do the thing"));
         assert!(!rendered.contains("[R1] A->>B"));
         assert!(!rendered.contains("edgeContext:\nsequenceDiagram"));
-        // Edge context should live outside the Mermaid fence.
-        assert!(rendered.contains("**edgeContext:**\n**[R1]**\nMust be idempotent\n"));
+        // Edge context should be rendered as a Mermaid note.
+        assert!(rendered.contains("Note over A,B: Must be idempotent"));
         // And it should parse back.
         let parsed_back = parse_sequence_gram(&rendered);
         assert_eq!(parsed_back.len(), 1);
@@ -2355,8 +2043,6 @@ required = true
     fn open_create_task_builds_one_row_per_template_field() {
         let now = Timestamp::parse("2026-04-24T10:00:00Z").unwrap();
         let mut m = Model::new();
-        let pid = ProjectId::new();
-        m.selected_project = Some(pid);
         let mut tpl = Template::new("refactor", now);
         tpl.fields.push(Field {
             id: "module".into(),
@@ -2401,20 +2087,8 @@ required = true
     }
 
     #[test]
-    fn open_create_task_warns_without_project() {
-        let mut m = Model::new();
-        let now = Timestamp::parse("2026-04-24T10:00:00Z").unwrap();
-        m.templates.push(Template::new("t", now));
-        update(&mut m, Msg::OpenCreateTask);
-        assert!(m.form.is_none());
-        assert!(m.picker.is_none());
-        assert_eq!(m.toasts.len(), 1);
-    }
-
-    #[test]
     fn open_create_task_warns_without_templates() {
         let mut m = Model::new();
-        m.selected_project = Some(ProjectId::new());
         update(&mut m, Msg::OpenCreateTask);
         assert!(m.form.is_none());
         assert!(m.picker.is_none());
@@ -2425,7 +2099,6 @@ required = true
     fn open_create_task_opens_picker_with_multiple_templates() {
         let now = Timestamp::parse("2026-04-24T10:00:00Z").unwrap();
         let mut m = Model::new();
-        m.selected_project = Some(ProjectId::new());
         m.templates.push(Template::new("alpha", now));
         m.templates.push(Template::new("beta", now));
         update(&mut m, Msg::OpenCreateTask);
@@ -2439,7 +2112,6 @@ required = true
     fn template_picker_accept_opens_form() {
         let now = Timestamp::parse("2026-04-24T10:00:00Z").unwrap();
         let mut m = Model::new();
-        m.selected_project = Some(ProjectId::new());
         m.templates.push(Template::new("alpha", now));
         m.templates.push(Template::new("beta", now));
         update(&mut m, Msg::OpenCreateTask);
@@ -2453,7 +2125,7 @@ required = true
         update(&mut m, inner);
         assert!(m.picker.is_none());
         let form = m.form.as_ref().expect("form should open on accept");
-        let FormSubmit::CreateTask(_pid, tid) = form.submit else {
+        let FormSubmit::CreateTask(tid) = form.submit else {
             panic!("unexpected submit: {:?}", form.submit);
         };
         assert_eq!(tid, expected_tid);
@@ -2463,7 +2135,6 @@ required = true
     fn template_picker_cancel_closes_without_form() {
         let now = Timestamp::parse("2026-04-24T10:00:00Z").unwrap();
         let mut m = Model::new();
-        m.selected_project = Some(ProjectId::new());
         m.templates.push(Template::new("alpha", now));
         m.templates.push(Template::new("beta", now));
         update(&mut m, Msg::OpenCreateTask);
@@ -2476,7 +2147,6 @@ required = true
     fn open_create_task_single_template_skips_picker() {
         let now = Timestamp::parse("2026-04-24T10:00:00Z").unwrap();
         let mut m = Model::new();
-        m.selected_project = Some(ProjectId::new());
         m.templates.push(Template::new("solo", now));
         update(&mut m, Msg::OpenCreateTask);
         assert!(m.picker.is_none());
@@ -2499,14 +2169,6 @@ required = true
     }
 
     #[test]
-    fn project_cursor_snaps_to_len() {
-        let mut m = Model::new();
-        m.projects = Vec::new();
-        update(&mut m, Msg::ProjectCursor(5));
-        assert_eq!(m.project_cursor, 0);
-    }
-
-    #[test]
     fn palette_accept_produces_command() {
         let mut m = Model::new();
         update(&mut m, Msg::PalToggle);
@@ -2516,25 +2178,6 @@ required = true
         let cmd = update(&mut m, Msg::PalAccept);
         assert!(matches!(cmd, Some(Cmd::Dispatch(Msg::Quit))));
         assert!(!m.palette_open);
-    }
-
-    #[test]
-    fn delete_project_asks_for_confirm() {
-        let mut m = Model::new();
-        let p = Project::new(
-            "x",
-            "/x",
-            lattice_core::time::Timestamp::parse("2026-01-01T00:00:00Z").unwrap(),
-        );
-        let pid = p.id;
-        m.projects.push(p);
-        update(&mut m, Msg::DeleteProject(pid));
-        assert!(m.confirm.is_some());
-        let cmd = update(&mut m, Msg::AckConfirm);
-        match cmd {
-            Some(Cmd::Dispatch(Msg::ConfirmDeleteProject(x))) => assert_eq!(x, pid),
-            other => panic!("unexpected cmd: {other:?}"),
-        }
     }
 
     fn multiline_field(value: &str, caret: usize) -> FormField {
@@ -2621,7 +2264,7 @@ required = true
             title: "t".into(),
             fields: vec![multiline_field("hello", 2)],
             cursor: 0,
-            submit: FormSubmit::CreateProject,
+            submit: FormSubmit::CreateTemplate,
         });
         update(&mut m, Msg::FormInputChar('X'));
         let f = &m.form.as_ref().unwrap().fields[0];
@@ -2639,7 +2282,7 @@ required = true
                 FormField::plain("b", "hello", false, true),
             ],
             cursor: 0,
-            submit: FormSubmit::CreateProject,
+            submit: FormSubmit::CreateTemplate,
         });
         update(&mut m, Msg::FormNext);
         let f = &m.form.as_ref().unwrap();
@@ -2648,80 +2291,14 @@ required = true
     }
 
     #[test]
-    fn select_and_go_to_tasks_sets_selection_and_screen() {
-        let now = Timestamp::parse("2026-04-24T10:00:00Z").unwrap();
-        let mut m = Model::new();
-        let proj = Project::new("demo", std::path::PathBuf::from("/tmp/x"), now);
-        let id = proj.id;
-        m.projects.push(proj);
-        update(&mut m, Msg::SelectAndGoToTasks(id));
-        assert_eq!(m.selected_project, Some(id));
-        assert_eq!(m.screen, Screen::Tasks);
-        assert_eq!(m.toasts.len(), 1);
-    }
-
-    #[test]
-    fn open_project_picker_warns_when_empty() {
-        let mut m = Model::new();
-        update(&mut m, Msg::OpenProjectPicker);
-        assert!(m.picker.is_none());
-        assert_eq!(m.toasts.len(), 1);
-    }
-
-    #[test]
-    fn open_project_picker_preloads_selected_cursor() {
-        let now = Timestamp::parse("2026-04-24T10:00:00Z").unwrap();
-        let mut m = Model::new();
-        m.projects
-            .push(Project::new("a", std::path::PathBuf::from("/a"), now));
-        m.projects
-            .push(Project::new("b", std::path::PathBuf::from("/b"), now));
-        let target = m.projects[1].id;
-        m.selected_project = Some(target);
-        update(&mut m, Msg::OpenProjectPicker);
-        let picker = m.picker.as_ref().expect("picker should open");
-        assert_eq!(picker.cursor, 1);
-        assert_eq!(picker.items.len(), 2);
-    }
-
-    #[test]
-    fn request_dispatch_warns_without_project() {
-        let mut m = Model::new();
-        update(&mut m, Msg::RequestDispatch);
-        assert!(m.picker.is_none());
-        assert_eq!(m.toasts.len(), 1);
-    }
-
-    #[test]
-    fn request_dispatch_errors_without_installed_agent() {
-        let now = Timestamp::parse("2026-04-24T10:00:00Z").unwrap();
-        let mut m = Model::new();
-        let proj = Project::new("demo", std::path::PathBuf::from("/tmp/x"), now);
-        let pid = proj.id;
-        m.projects.push(proj);
-        m.selected_project = Some(pid);
-        // Task under cursor so guard #2 passes.
-        let mut t = lattice_core::entities::Task::new(pid, TemplateId::new(), 1, "t", now);
-        t.status = lattice_core::entities::TaskStatus::Draft;
-        m.tasks_by_project.insert(pid, vec![t]);
-        update(&mut m, Msg::RequestDispatch);
-        assert!(m.picker.is_none(), "no picker without installed agent");
-        assert_eq!(m.toasts.len(), 1);
-        assert_eq!(m.toasts[0].level, crate::toast::ToastLevel::Error);
-    }
-
-    #[test]
     fn open_save_task_prompt_opens_form() {
         let now = Timestamp::parse("2026-04-24T10:00:00Z").unwrap();
         let mut m = Model::new();
-        let pid = ProjectId::new();
-        m.selected_project = Some(pid);
-        let mut t = lattice_core::entities::Task::new(pid, TemplateId::new(), 1, "demo", now);
-        t.status = lattice_core::entities::TaskStatus::Draft;
+        let t = lattice_core::entities::Task::new(TemplateId::new(), 1, "demo", now);
         let tid = t.id;
-        m.tasks_by_project.insert(pid, vec![t]);
+        m.tasks = vec![t];
 
-        update(&mut m, Msg::OpenSaveTaskPrompt(pid, tid));
+        update(&mut m, Msg::OpenSaveTaskPrompt(tid));
         let form = m.form.as_ref().expect("save form should open");
         assert!(form.title.contains("Save prompt"));
         assert_eq!(form.fields.len(), 1);
@@ -2729,7 +2306,7 @@ required = true
         assert_eq!(form.fields[0].value, "demo");
         assert!(matches!(
             form.submit,
-            FormSubmit::SaveTaskPromptToFile(p, t) if p == pid && t == tid
+            FormSubmit::SaveTaskPromptToFile(t) if t == tid
         ));
     }
 }

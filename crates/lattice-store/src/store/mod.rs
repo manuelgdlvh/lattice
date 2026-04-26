@@ -10,8 +10,8 @@
 
 use async_trait::async_trait;
 
-use lattice_core::entities::{Project, Queue, Run, RunExit, Settings, Task, Template};
-use lattice_core::ids::{ProjectId, RunId, TaskId, TemplateId};
+use lattice_core::entities::{Settings, Task, Template};
+use lattice_core::ids::{TaskId, TemplateId};
 
 use crate::error::StoreResult;
 
@@ -19,24 +19,11 @@ use crate::error::StoreResult;
 /// of whether the change came from us or an external editor.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum StoreEvent {
-    ProjectChanged(ProjectId),
-    ProjectRemoved(ProjectId),
     TemplateChanged(TemplateId),
     TemplateRemoved(TemplateId),
-    TaskChanged { project: ProjectId, task: TaskId },
-    TaskRemoved { project: ProjectId, task: TaskId },
-    RunChanged { project: ProjectId, run: RunId },
-    RunRemoved { project: ProjectId, run: RunId },
-    QueueChanged(ProjectId),
+    TaskChanged(TaskId),
+    TaskRemoved(TaskId),
     SettingsChanged,
-}
-
-#[async_trait]
-pub trait Projects: Send + Sync {
-    async fn list(&self) -> StoreResult<Vec<Project>>;
-    async fn load(&self, id: ProjectId) -> StoreResult<Option<Project>>;
-    async fn save(&self, project: &Project) -> StoreResult<()>;
-    async fn delete(&self, id: ProjectId) -> StoreResult<()>;
 }
 
 #[async_trait]
@@ -49,31 +36,12 @@ pub trait Templates: Send + Sync {
 
 #[async_trait]
 pub trait Tasks: Send + Sync {
-    async fn list_for_project(&self, project: ProjectId) -> StoreResult<Vec<Task>>;
-    async fn load(&self, project: ProjectId, id: TaskId) -> StoreResult<Option<Task>>;
+    async fn list(&self) -> StoreResult<Vec<Task>>;
+    async fn load(&self, id: TaskId) -> StoreResult<Option<Task>>;
     async fn save(&self, task: &Task) -> StoreResult<()>;
     async fn save_snapshot(&self, task: &Task, template: &Template) -> StoreResult<()>;
     async fn save_prompt(&self, task: &Task, prompt: &str) -> StoreResult<()>;
-    async fn delete(&self, project: ProjectId, id: TaskId) -> StoreResult<()>;
-}
-
-#[async_trait]
-pub trait Runs: Send + Sync {
-    async fn list_for_project(&self, project: ProjectId) -> StoreResult<Vec<Run>>;
-    async fn load(&self, project: ProjectId, id: RunId) -> StoreResult<Option<Run>>;
-    async fn save(&self, run: &Run) -> StoreResult<()>;
-    /// Persist the terminal summary alongside `run.toml`.
-    async fn save_exit(&self, project: ProjectId, id: RunId, exit: &RunExit) -> StoreResult<()>;
-    async fn load_exit(&self, project: ProjectId, id: RunId) -> StoreResult<Option<RunExit>>;
-    async fn delete(&self, project: ProjectId, id: RunId) -> StoreResult<()>;
-}
-
-#[async_trait]
-pub trait Queues: Send + Sync {
-    async fn list(&self) -> StoreResult<Vec<Queue>>;
-    async fn load(&self, project: ProjectId) -> StoreResult<Option<Queue>>;
-    async fn save(&self, queue: &Queue) -> StoreResult<()>;
-    async fn delete(&self, project: ProjectId) -> StoreResult<()>;
+    async fn delete(&self, id: TaskId) -> StoreResult<()>;
 }
 
 #[async_trait]
