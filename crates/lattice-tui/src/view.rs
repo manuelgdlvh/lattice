@@ -42,9 +42,204 @@ pub fn render(frame: &mut Frame<'_>, model: &Model) {
     if let Some(ed) = &model.sequence_editor {
         render_sequence_editor(frame, area, ed);
     }
+    if let Some(ed) = &model.code_editor {
+        render_code_editor(frame, area, ed);
+    }
     if let Some(confirm) = &model.confirm {
         render_confirm(frame, area, confirm);
     }
+}
+
+fn render_code_editor(frame: &mut Frame<'_>, area: Rect, ed: &crate::model::CodeEditorState) {
+    let width = ((area.width as u32) * 80 / 100)
+        .try_into()
+        .unwrap_or(area.width)
+        .clamp(70, 200);
+    let height = area.height.saturating_sub(4).clamp(16, 34);
+    let left = (area.width.saturating_sub(width)) / 2 + area.x;
+    let top = (area.height.saturating_sub(height)) / 2 + area.y;
+    let rect = Rect {
+        x: left,
+        y: top,
+        width,
+        height,
+    };
+    frame.render_widget(Clear, rect);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(Span::styled(
+            " code-blocks editor ",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ))
+        .title_bottom(Line::from(vec![
+            Span::styled("F2", Style::default().fg(Color::Green)),
+            Span::raw(" save  "),
+            Span::styled("Esc", Style::default().fg(Color::Yellow)),
+            Span::raw(" cancel  "),
+            Span::styled("Tab", Style::default().fg(Color::Cyan)),
+            Span::raw(" next block  "),
+            Span::styled("n", Style::default().fg(Color::Cyan)),
+            Span::raw(" new  "),
+            Span::styled("r", Style::default().fg(Color::Cyan)),
+            Span::raw(" rename  "),
+            Span::styled("l", Style::default().fg(Color::Cyan)),
+            Span::raw(" language  "),
+            Span::styled("e", Style::default().fg(Color::Cyan)),
+            Span::raw(" edit code  "),
+            Span::styled("D", Style::default().fg(Color::Cyan)),
+            Span::raw(" delete"),
+        ]));
+
+    let inner = block.inner(rect);
+    frame.render_widget(block, rect);
+
+    let footer_h = match ed.mode {
+        crate::model::CodeEditorMode::EditCode { .. } => 6,
+        _ => 3,
+    };
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(0),
+            Constraint::Length(footer_h),
+        ])
+        .split(inner);
+
+    let cur = ed.blocks.get(ed.block_cursor);
+    let title_line = if let Some(b) = cur {
+        Line::from(vec![
+            Span::styled("Block: ", Style::default().add_modifier(Modifier::BOLD)),
+            Span::styled(b.name.clone(), Style::default().fg(Color::Cyan)),
+            Span::styled(
+                format!("  ({}/{})", ed.block_cursor + 1, ed.blocks.len().max(1)),
+                Style::default().fg(Color::DarkGray),
+            ),
+            Span::raw("  "),
+            Span::styled("lang: ", Style::default().add_modifier(Modifier::BOLD)),
+            Span::styled(b.language.clone(), Style::default().fg(Color::Magenta)),
+        ])
+    } else {
+        Line::from("No blocks.")
+    };
+    frame.render_widget(Paragraph::new(vec![title_line]).wrap(Wrap { trim: false }), chunks[0]);
+
+    let mid = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(72), Constraint::Percentage(28)])
+        .split(chunks[1]);
+
+    let preview_lines: Vec<Line<'static>> = if let Some(b) = cur {
+        let mut v = Vec::new();
+        v.push(Line::from(Span::styled(
+            format!("```{}", b.language.trim()),
+            Style::default().fg(Color::DarkGray),
+        )));
+        for l in b.code.lines() {
+            v.push(Line::from(l.to_string()));
+        }
+        v.push(Line::from(Span::styled("```", Style::default().fg(Color::DarkGray))));
+        if v.is_empty() {
+            vec![Line::from("Empty.")]
+        } else {
+            v
+        }
+    } else {
+        vec![Line::from("No block selected.")]
+    };
+    frame.render_widget(
+        Paragraph::new(preview_lines)
+            .wrap(Wrap { trim: false })
+            .block(Block::default().borders(Borders::ALL).title(" Preview ")),
+        mid[0],
+    );
+
+    let items: Vec<ListItem<'_>> = ed
+        .blocks
+        .iter()
+        .enumerate()
+        .map(|(i, b)| {
+            let marker = if i == ed.block_cursor { "▶ " } else { "  " };
+            ListItem::new(Line::from(vec![
+                Span::styled(marker, Style::default().fg(Color::Cyan)),
+                Span::styled(b.name.clone(), Style::default()),
+            ]))
+        })
+        .collect();
+    frame.render_widget(
+        List::new(items).block(Block::default().borders(Borders::ALL).title(" Blocks ")),
+        mid[1],
+    );
+
+    match &ed.mode {
+        crate::model::CodeEditorMode::EditCode { editor } => {
+            let title = " Edit code (Enter=newline · Alt/Ctrl+Enter=done · Esc=cancel) ";
+            let chunk = chunks[2];
+            let caret = editor.caret.min(editor.value.len());
+            let body = insert_caret(&editor.value, caret);
+
+            // Scroll so the caret stays visible (same strategy as the main form).
+            let inner_w = chunk.width.saturating_sub(2);
+            let inner_h = chunk.height.saturating_sub(2).max(1);
+            let scroll_y = {
+                let caret_row =
+                    wrapped_row_count(&editor.value[..caret], inner_w).saturating_sub(1);
+                caret_row.saturating_sub(inner_h.saturating_sub(1))
+            };
+
+            frame.render_widget(
+                Paragraph::new(body)
+                    .wrap(Wrap { trim: false })
+                    .scroll((scroll_y, 0))
+                    .block(Block::default().borders(Borders::ALL).title(title)),
+                chunk,
+            );
+        }
+        _ => {
+            let footer_lines: Vec<Line<'static>> = match &ed.mode {
+                crate::model::CodeEditorMode::Browse => vec![Line::from(Span::styled(
+                    "Tip: press e to edit code.",
+                    Style::default().fg(Color::DarkGray),
+                ))],
+                crate::model::CodeEditorMode::AddBlock { input } => vec![Line::from(vec![
+                    Span::styled("New block name: ", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::raw(input.clone()),
+                    Span::styled("▌", Style::default().fg(Color::Cyan)),
+                    Span::styled("  Enter=create", Style::default().fg(Color::DarkGray)),
+                ])],
+                crate::model::CodeEditorMode::RenameBlock { input } => vec![Line::from(vec![
+                    Span::styled("Rename block: ", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::raw(input.clone()),
+                    Span::styled("▌", Style::default().fg(Color::Cyan)),
+                    Span::styled("  Enter=save", Style::default().fg(Color::DarkGray)),
+                ])],
+                crate::model::CodeEditorMode::EditLanguage { input } => vec![Line::from(vec![
+                    Span::styled("Language: ", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::raw(input.clone()),
+                    Span::styled("▌", Style::default().fg(Color::Cyan)),
+                    Span::styled("  Enter=save", Style::default().fg(Color::DarkGray)),
+                ])],
+                crate::model::CodeEditorMode::EditCode { .. } => {
+                    vec![Line::from("")]
+                }
+            };
+            frame.render_widget(
+                Paragraph::new(footer_lines)
+                    .wrap(Wrap { trim: false })
+                    .block(Block::default().borders(Borders::ALL)),
+                chunks[2],
+            );
+        }
+    }
+}
+
+fn insert_caret(s: &str, caret: usize) -> String {
+    let caret = caret.min(s.len());
+    let (before, after) = s.split_at(caret);
+    format!("{before}▌{after}")
 }
 
 fn render_sequence_editor(
@@ -695,15 +890,19 @@ fn render_form(frame: &mut Frame<'_>, area: Rect, form: &crate::model::FormState
         } else {
             Style::default().fg(Color::DarkGray)
         };
-        let is_seq = matches!(
-            field.kind,
-            Some(lattice_core::fields::FieldKind::SequenceGram)
-        );
-        let f3_badge = if is_seq { "  [F3 open editor]" } else { "" };
-        let title = if field.required {
-            format!(" {} *{f3_badge} ", field.label)
+        let is_seq = matches!(field.kind, Some(lattice_core::fields::FieldKind::SequenceGram));
+        let is_code = matches!(field.kind, Some(lattice_core::fields::FieldKind::CodeBlocks));
+        let editor_badge = if is_seq {
+            "  [F3 open editor]"
+        } else if is_code {
+            "  [F4 open editor]"
         } else {
-            format!(" {}{f3_badge} ", field.label)
+            ""
+        };
+        let title = if field.required {
+            format!(" {} *{editor_badge} ", field.label)
+        } else {
+            format!(" {}{editor_badge} ", field.label)
         };
         let caret = field.caret.min(field.value.len());
         let body = if is_seq {
@@ -711,6 +910,12 @@ fn render_form(frame: &mut Frame<'_>, area: Rect, form: &crate::model::FormState
                 "<sequence diagram — press F3 to edit>".to_string()
             } else {
                 // Keep the raw stored content visible, but make it clear it's not editable here.
+                field.value.clone()
+            }
+        } else if is_code {
+            if field.value.trim().is_empty() {
+                "<code blocks — press F4 to edit>".to_string()
+            } else {
                 field.value.clone()
             }
         } else if focused {

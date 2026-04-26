@@ -10,6 +10,7 @@
 //! - `select` — single choice from `options`
 //! - `multiselect` — subset of `options`
 //! - `sequence-gram` — string (edited with the sequence diagram UI)
+//! - `code-blocks` — string (edited with the code blocks UI)
 
 mod validation;
 
@@ -75,6 +76,8 @@ pub enum FieldKind {
     Multiselect,
     #[serde(rename = "sequence-gram")]
     SequenceGram,
+    #[serde(rename = "code-blocks")]
+    CodeBlocks,
 }
 
 impl FieldKind {

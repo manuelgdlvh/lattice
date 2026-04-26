@@ -98,6 +98,61 @@ pub fn translate(model: &Model, key: KeyEvent) -> Option<Msg> {
         };
     }
 
+    // Code blocks editor captures everything while open.
+    if let Some(ed) = &model.code_editor {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let alt = key.modifiers.contains(KeyModifiers::ALT);
+
+        if matches!(key.code, KeyCode::Esc) {
+            return Some(Msg::CodeEdCancel);
+        }
+        if matches!(key.code, KeyCode::F(2)) {
+            return Some(Msg::CodeEdSave);
+        }
+        if matches!(key.code, KeyCode::Backspace) {
+            return Some(Msg::CodeEdBackspace);
+        }
+        if matches!(key.code, KeyCode::Enter) {
+            // Match the "textarea" feel while editing code:
+            // - Enter inserts a newline
+            // - Alt/Ctrl+Enter confirms (done editing)
+            if matches!(ed.mode, crate::model::CodeEditorMode::EditCode { .. }) {
+                if alt || ctrl {
+                    return Some(Msg::CodeEdConfirm);
+                }
+                return Some(Msg::CodeEdInputChar('\n'));
+            }
+            return Some(Msg::CodeEdConfirm);
+        }
+
+        // While typing/editing, printable characters should type.
+        if !matches!(ed.mode, crate::model::CodeEditorMode::Browse) {
+            return match key.code {
+                KeyCode::Tab => Some(Msg::CodeEdInputChar('\t')),
+                KeyCode::Left => Some(Msg::CodeEdCaretLeft),
+                KeyCode::Right => Some(Msg::CodeEdCaretRight),
+                KeyCode::Up => Some(Msg::CodeEdCaretUp),
+                KeyCode::Down => Some(Msg::CodeEdCaretDown),
+                KeyCode::Home => Some(Msg::CodeEdCaretHome),
+                KeyCode::End => Some(Msg::CodeEdCaretEnd),
+                KeyCode::Char(c) => Some(Msg::CodeEdInputChar(c)),
+                _ => None,
+            };
+        }
+
+        return match key.code {
+            KeyCode::Tab => Some(Msg::CodeEdMoveBlock(1)),
+            KeyCode::Up => Some(Msg::CodeEdMoveBlock(-1)),
+            KeyCode::Down => Some(Msg::CodeEdMoveBlock(1)),
+            KeyCode::Char('n') => Some(Msg::CodeEdStartAddBlock),
+            KeyCode::Char('r') => Some(Msg::CodeEdStartRenameBlock),
+            KeyCode::Char('l') => Some(Msg::CodeEdStartEditLanguage),
+            KeyCode::Char('e') => Some(Msg::CodeEdStartEditCode),
+            KeyCode::Char('D') => Some(Msg::CodeEdDeleteBlock),
+            _ => None,
+        };
+    }
+
     // Modal picker overlay (templates / projects / agents): arrow
     // keys + Enter / Esc. The picker itself is message-agnostic;
     // accepting runs the per-item `Msg` stored in the picker.
@@ -118,6 +173,12 @@ pub fn translate(model: &Model, key: KeyEvent) -> Option<Msg> {
             .fields
             .get(form.cursor)
             .is_some_and(|f| matches!(f.kind, Some(lattice_core::fields::FieldKind::SequenceGram)));
+        let focused_codeblocks = form.fields.get(form.cursor).is_some_and(|f| {
+            matches!(
+                f.kind,
+                Some(lattice_core::fields::FieldKind::CodeBlocks)
+            )
+        });
         // Submit bindings, in order of robustness across terminals:
         //   * `F2`              — universally reliable
         //   * `Ctrl+S`          — works once raw mode disables IXON; most
@@ -153,6 +214,7 @@ pub fn translate(model: &Model, key: KeyEvent) -> Option<Msg> {
             KeyCode::Tab => Some(Msg::FormNext),
             KeyCode::BackTab => Some(Msg::FormPrev),
             KeyCode::F(3) if focused_sequence => Some(Msg::OpenSequenceEditor),
+            KeyCode::F(4) if focused_codeblocks => Some(Msg::OpenCodeEditor),
             KeyCode::Up if focused_multiline => Some(Msg::FormCaretUp),
             KeyCode::Down if focused_multiline => Some(Msg::FormCaretDown),
             KeyCode::Up => Some(Msg::FormPrev),

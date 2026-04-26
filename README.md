@@ -22,7 +22,7 @@ reviewable detail out.**
 ## Features
 
 - **Templates** — author schema-driven prompt templates with required
-  and optional fields (textarea, select, multiselect, sequence-gram),
+  and optional fields (textarea, select, multiselect, sequence-gram, code-blocks),
   plus a Jinja-rendered prompt body.
 - **Tasks** — instantiate a template, fill the fields, preview the rendered
   prompt, and save the prompt to a markdown file.

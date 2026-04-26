@@ -115,7 +115,8 @@ impl App {
                         || model.confirm.is_some()
                         || model.form.is_some()
                         || model.picker.is_some()
-                        || model.sequence_editor.is_some();
+                        || model.sequence_editor.is_some()
+                        || model.code_editor.is_some();
                     if !overlays_open
                         && matches!(model.screen, crate::model::Screen::Tasks)
                         && matches!(
@@ -722,7 +723,7 @@ fn parse_field_value(
         return Ok(None);
     }
     let v = match kind {
-        FieldKind::Textarea | FieldKind::SequenceGram | FieldKind::Select => {
+        FieldKind::Textarea | FieldKind::SequenceGram | FieldKind::CodeBlocks | FieldKind::Select => {
             serde_json::Value::String(raw.to_string())
         }
         FieldKind::Multiselect => serde_json::Value::Array(

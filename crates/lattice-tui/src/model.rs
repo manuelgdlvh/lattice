@@ -65,6 +65,35 @@ pub struct Model {
     pub picker: Option<Picker>,
     /// Modal sequence diagram editor for `sequence-gram` fields.
     pub sequence_editor: Option<SequenceEditorState>,
+    /// Modal code blocks editor for `code-blocks` fields.
+    pub code_editor: Option<CodeEditorState>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CodeEditorState {
+    /// Index into `form.fields` we are editing.
+    pub form_field_index: usize,
+    /// Multiple code blocks inside one field.
+    pub blocks: Vec<CodeBlock>,
+    /// Selected block.
+    pub block_cursor: usize,
+    pub mode: CodeEditorMode,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CodeBlock {
+    pub name: String,
+    pub language: String,
+    pub code: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CodeEditorMode {
+    Browse,
+    AddBlock { input: String },
+    RenameBlock { input: String },
+    EditLanguage { input: String },
+    EditCode { editor: FormField },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -357,6 +386,7 @@ impl Model {
             form: None,
             picker: None,
             sequence_editor: None,
+            code_editor: None,
         }
     }
 
@@ -462,6 +492,26 @@ pub enum Msg {
     SeqEdStartAddDiagram,
     SeqEdStartRenameDiagram,
     SeqEdDeleteDiagram,
+
+    // code-blocks editor ----------------------------------------------
+    OpenCodeEditor,
+    CodeEdCancel,
+    CodeEdSave,
+    CodeEdMoveBlock(isize),
+    CodeEdInputChar(char),
+    CodeEdBackspace,
+    CodeEdConfirm,
+    CodeEdStartAddBlock,
+    CodeEdStartRenameBlock,
+    CodeEdStartEditLanguage,
+    CodeEdStartEditCode,
+    CodeEdDeleteBlock,
+    CodeEdCaretLeft,
+    CodeEdCaretRight,
+    CodeEdCaretUp,
+    CodeEdCaretDown,
+    CodeEdCaretHome,
+    CodeEdCaretEnd,
 
     // results from async actions --------------------------------------
     ConfirmDeleteTemplate(TemplateId),
@@ -819,6 +869,13 @@ pub fn update(model: &mut Model, msg: Msg) -> Option<Cmd> {
                     ));
                     return None;
                 }
+                if matches!(field.kind, Some(FieldKind::CodeBlocks)) {
+                    model.toasts.push(Toast::new(
+                        ToastLevel::Info,
+                        "code-blocks is read-only here; press F4 to edit",
+                    ));
+                    return None;
+                }
                 field.insert_char(c);
             }
             None
@@ -831,6 +888,13 @@ pub fn update(model: &mut Model, msg: Msg) -> Option<Cmd> {
                     model.toasts.push(Toast::new(
                         ToastLevel::Info,
                         "sequence-gram is read-only here; press F3 to edit",
+                    ));
+                    return None;
+                }
+                if matches!(field.kind, Some(FieldKind::CodeBlocks)) {
+                    model.toasts.push(Toast::new(
+                        ToastLevel::Info,
+                        "code-blocks is read-only here; press F4 to edit",
                     ));
                     return None;
                 }
@@ -1284,6 +1348,254 @@ pub fn update(model: &mut Model, msg: Msg) -> Option<Cmd> {
             None
         }
 
+        // code-blocks editor ----------------------------------------------
+        Msg::OpenCodeEditor => {
+            let Some(form) = &model.form else {
+                return None;
+            };
+            let Some(field) = form.fields.get(form.cursor) else {
+                return None;
+            };
+            if !matches!(field.kind, Some(FieldKind::CodeBlocks)) {
+                return None;
+            }
+            let blocks = parse_code_blocks(&field.value);
+            model.code_editor = Some(CodeEditorState {
+                form_field_index: form.cursor,
+                blocks,
+                block_cursor: 0,
+                mode: CodeEditorMode::Browse,
+            });
+            None
+        }
+        Msg::CodeEdCancel => {
+            model.code_editor = None;
+            None
+        }
+        Msg::CodeEdSave => {
+            let Some(ed) = model.code_editor.take() else {
+                return None;
+            };
+            if let Some(form) = &mut model.form
+                && let Some(f) = form.fields.get_mut(ed.form_field_index)
+            {
+                f.value = render_code_blocks(&ed.blocks);
+                f.set_caret(f.value.len());
+            }
+            None
+        }
+        Msg::CodeEdMoveBlock(d) => {
+            if let Some(ed) = &mut model.code_editor
+                && matches!(ed.mode, CodeEditorMode::Browse)
+                && !ed.blocks.is_empty()
+            {
+                let n = i128::try_from(ed.blocks.len()).unwrap_or(1).max(1);
+                let cur = i128::try_from(ed.block_cursor).unwrap_or(0);
+                let delta = i128::try_from(d).unwrap_or(0);
+                let wrapped = ((cur + delta) % n + n) % n;
+                ed.block_cursor = usize::try_from(wrapped).unwrap_or(0);
+            }
+            None
+        }
+        Msg::CodeEdStartAddBlock => {
+            if let Some(ed) = &mut model.code_editor {
+                ed.mode = CodeEditorMode::AddBlock {
+                    input: String::new(),
+                };
+            }
+            None
+        }
+        Msg::CodeEdStartRenameBlock => {
+            if let Some(ed) = &mut model.code_editor {
+                let current = ed
+                    .blocks
+                    .get(ed.block_cursor)
+                    .map(|b| b.name.clone())
+                    .unwrap_or_default();
+                ed.mode = CodeEditorMode::RenameBlock { input: current };
+            }
+            None
+        }
+        Msg::CodeEdStartEditLanguage => {
+            if let Some(ed) = &mut model.code_editor {
+                let current = ed
+                    .blocks
+                    .get(ed.block_cursor)
+                    .map(|b| b.language.clone())
+                    .unwrap_or_default();
+                ed.mode = CodeEditorMode::EditLanguage { input: current };
+            }
+            None
+        }
+        Msg::CodeEdStartEditCode => {
+            if let Some(ed) = &mut model.code_editor {
+                let current = ed
+                    .blocks
+                    .get(ed.block_cursor)
+                    .map(|b| b.code.clone())
+                    .unwrap_or_default();
+                ed.mode = CodeEditorMode::EditCode {
+                    editor: FormField::plain("Code", current, false, true),
+                };
+            }
+            None
+        }
+        Msg::CodeEdInputChar(c) => {
+            if let Some(ed) = &mut model.code_editor {
+                match &mut ed.mode {
+                    CodeEditorMode::AddBlock { input }
+                    | CodeEditorMode::RenameBlock { input }
+                    | CodeEditorMode::EditLanguage { input } => input.push(c),
+                    CodeEditorMode::EditCode { editor } => {
+                        editor.insert_char(c);
+                    }
+                    CodeEditorMode::Browse => {}
+                }
+            }
+            None
+        }
+        Msg::CodeEdBackspace => {
+            if let Some(ed) = &mut model.code_editor {
+                match &mut ed.mode {
+                    CodeEditorMode::AddBlock { input }
+                    | CodeEditorMode::RenameBlock { input }
+                    | CodeEditorMode::EditLanguage { input } => {
+                        input.pop();
+                    }
+                    CodeEditorMode::EditCode { editor } => {
+                        editor.backspace();
+                    }
+                    CodeEditorMode::Browse => {}
+                }
+            }
+            None
+        }
+        Msg::CodeEdCaretLeft => {
+            if let Some(ed) = &mut model.code_editor {
+                match &mut ed.mode {
+                    CodeEditorMode::EditCode { editor } => {
+                        editor.caret_left();
+                    }
+                    _ => {}
+                }
+            }
+            None
+        }
+        Msg::CodeEdCaretRight => {
+            if let Some(ed) = &mut model.code_editor {
+                match &mut ed.mode {
+                    CodeEditorMode::EditCode { editor } => {
+                        editor.caret_right();
+                    }
+                    _ => {}
+                }
+            }
+            None
+        }
+        Msg::CodeEdCaretUp => {
+            if let Some(ed) = &mut model.code_editor {
+                match &mut ed.mode {
+                    CodeEditorMode::EditCode { editor } => {
+                        editor.caret_up();
+                    }
+                    _ => {}
+                }
+            }
+            None
+        }
+        Msg::CodeEdCaretDown => {
+            if let Some(ed) = &mut model.code_editor {
+                match &mut ed.mode {
+                    CodeEditorMode::EditCode { editor } => {
+                        editor.caret_down();
+                    }
+                    _ => {}
+                }
+            }
+            None
+        }
+        Msg::CodeEdCaretHome => {
+            if let Some(ed) = &mut model.code_editor {
+                match &mut ed.mode {
+                    CodeEditorMode::EditCode { editor } => {
+                        editor.caret_home();
+                    }
+                    _ => {}
+                }
+            }
+            None
+        }
+        Msg::CodeEdCaretEnd => {
+            if let Some(ed) = &mut model.code_editor {
+                match &mut ed.mode {
+                    CodeEditorMode::EditCode { editor } => {
+                        editor.caret_end();
+                    }
+                    _ => {}
+                }
+            }
+            None
+        }
+        Msg::CodeEdConfirm => {
+            if let Some(ed) = &mut model.code_editor {
+                match std::mem::replace(&mut ed.mode, CodeEditorMode::Browse) {
+                    CodeEditorMode::AddBlock { input } => {
+                        let name = input.trim();
+                        let name = if name.is_empty() {
+                            format!("Block {}", ed.blocks.len() + 1)
+                        } else {
+                            name.to_string()
+                        };
+                        ed.blocks.push(CodeBlock {
+                            name,
+                            language: "rust".into(),
+                            code: String::new(),
+                        });
+                        ed.block_cursor = ed.blocks.len().saturating_sub(1);
+                    }
+                    CodeEditorMode::RenameBlock { input } => {
+                        let name = input.trim();
+                        if let Some(b) = ed.blocks.get_mut(ed.block_cursor)
+                            && !name.is_empty()
+                        {
+                            b.name = name.to_string();
+                        }
+                    }
+                    CodeEditorMode::EditLanguage { input } => {
+                        let lang = input.trim();
+                        if let Some(b) = ed.blocks.get_mut(ed.block_cursor) {
+                            b.language = if lang.is_empty() { "text".into() } else { lang.into() };
+                        }
+                    }
+                    CodeEditorMode::EditCode { editor } => {
+                        if let Some(b) = ed.blocks.get_mut(ed.block_cursor) {
+                            b.code = editor.value.trim_end().to_string();
+                        }
+                    }
+                    CodeEditorMode::Browse => {}
+                }
+            }
+            None
+        }
+        Msg::CodeEdDeleteBlock => {
+            if let Some(ed) = &mut model.code_editor
+                && matches!(ed.mode, CodeEditorMode::Browse)
+                && !ed.blocks.is_empty()
+            {
+                let idx = ed.block_cursor.min(ed.blocks.len().saturating_sub(1));
+                ed.blocks.remove(idx);
+                if ed.blocks.is_empty() {
+                    ed.blocks.push(CodeBlock {
+                        name: "Block 1".into(),
+                        language: "rust".into(),
+                        code: String::new(),
+                    });
+                }
+                ed.block_cursor = ed.block_cursor.min(ed.blocks.len().saturating_sub(1));
+            }
+            None
+        }
+
         Msg::ConfirmDeleteTemplate(id) => Some(Cmd::DeleteTemplate(id)),
         Msg::ConfirmDeleteTask(t) => Some(Cmd::DeleteTask(t)),
     }
@@ -1306,6 +1618,103 @@ fn apply_delta(cur: usize, delta: isize, cap: usize) -> usize {
     let delta_i = i128::try_from(delta).unwrap_or(0);
     let clamped = (cur_i + delta_i).clamp(0, cap_i);
     usize::try_from(clamped).unwrap_or(0)
+}
+
+fn parse_code_blocks(src: &str) -> Vec<CodeBlock> {
+    let trimmed = src.trim();
+    if trimmed.is_empty() {
+        return vec![CodeBlock {
+            name: "Block 1".into(),
+            language: "rust".into(),
+            code: String::new(),
+        }];
+    }
+
+    let mut out: Vec<CodeBlock> = Vec::new();
+    let mut pending_name: Option<String> = None;
+    let mut in_fence = false;
+    let mut fence_lang = String::new();
+    let mut buf: Vec<String> = Vec::new();
+
+    for line in src.lines() {
+        let l = line.trim_end();
+        let t = l.trim();
+
+        if !in_fence {
+            if let Some(h) = t.strip_prefix("## ").or_else(|| t.strip_prefix("### ")) {
+                pending_name = Some(h.trim().to_string());
+                continue;
+            }
+
+            if let Some(rest) = t.strip_prefix("```") {
+                in_fence = true;
+                fence_lang = rest.trim().to_string();
+                buf.clear();
+                continue;
+            }
+        } else if t == "```" {
+            in_fence = false;
+            let name = pending_name
+                .take()
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or_else(|| format!("Block {}", out.len() + 1));
+            let language = if fence_lang.trim().is_empty() {
+                "text".to_string()
+            } else {
+                fence_lang.trim().to_string()
+            };
+            out.push(CodeBlock {
+                name,
+                language,
+                code: buf.join("\n").trim_end().to_string(),
+            });
+            fence_lang.clear();
+            buf.clear();
+            continue;
+        }
+
+        if in_fence {
+            buf.push(l.to_string());
+        }
+    }
+
+    if out.is_empty() {
+        return vec![CodeBlock {
+            name: pending_name
+                .take()
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or_else(|| "Block 1".into()),
+            language: "text".into(),
+            code: src.trim_end().to_string(),
+        }];
+    }
+
+    out
+}
+
+fn render_code_blocks(blocks: &[CodeBlock]) -> String {
+    let mut out = String::new();
+    for (i, b) in blocks.iter().enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        let name = b.name.trim();
+        out.push_str("## ");
+        out.push_str(if name.is_empty() { "Block" } else { name });
+        out.push('\n');
+        out.push_str("```");
+        let lang = b.language.trim();
+        if !lang.is_empty() {
+            out.push_str(lang);
+        }
+        out.push('\n');
+        if !b.code.is_empty() {
+            out.push_str(b.code.trim_end());
+            out.push('\n');
+        }
+        out.push_str("```\n");
+    }
+    out
 }
 
 fn parse_sequence_gram(src: &str) -> Vec<SequenceDiagram> {
@@ -1831,7 +2240,7 @@ pub enum Cmd {
 /// the common kinds so the UX doubles as documentation.
 fn default_fields_toml_hint() -> String {
     "# one [[fields]] block per field. kinds: textarea, select,\n\
-     # multiselect, sequence-gram.\n\
+     # multiselect, sequence-gram, code-blocks.\n\
      # Example:\n\
      # [[fields]]\n\
      # id = \"description\"\n\
@@ -1912,7 +2321,10 @@ fn open_create_task_form(model: &mut Model, tid: TemplateId) {
 /// `textarea`) and submit-time parsing of the typed value.
 fn form_field_for_template_field(field: &lattice_core::fields::Field) -> FormField {
     let label = format_field_label(field);
-    let multiline = matches!(field.kind, FieldKind::Textarea | FieldKind::SequenceGram);
+    let multiline = matches!(
+        field.kind,
+        FieldKind::Textarea | FieldKind::SequenceGram | FieldKind::CodeBlocks
+    );
     let value = match &field.default {
         Some(serde_json::Value::String(s)) => s.clone(),
         Some(serde_json::Value::Null) | None => String::new(),
@@ -1943,6 +2355,7 @@ fn format_field_label(field: &lattice_core::fields::Field) -> String {
         FieldKind::Select => "select",
         FieldKind::Multiselect => "multiselect",
         FieldKind::SequenceGram => "sequence-gram",
+        FieldKind::CodeBlocks => "code-blocks",
     };
     format!("{} [{}]", field.label, kind_label)
 }

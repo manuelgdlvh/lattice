@@ -137,6 +137,7 @@ entry.
 | `select` | `"option-id"` | `options: [..]` required. |
 | `multiselect` | `["a", "b"]` | `options: [..]` required. |
 | `sequence-gram` | `"string"` | Sequence diagram text. The TUI provides an F3 editor; per-edge notes render as Mermaid `Note over ...` lines. |
+| `code-blocks` | `"string"` | One or more named fenced code blocks. The TUI provides an F4 editor with per-block language. |
 
 ### 2.1 Common field properties
 
@@ -157,6 +158,7 @@ validation    table              # kind-dependent; see §3
 - `select` / `multiselect`: `options = ["a", "b", "c"]` **or**
   `options = [{ id = "a", label = "Alpha" }]`.
 - `sequence-gram`: author diagrams in the built-in editor (F3). Render in prompts with `{{ task.fields.<id> | sequence_gram }}` (or render the stored field directly).
+- `code-blocks`: author named code blocks in the built-in editor (F4). Stored as standard Markdown fenced code blocks (```lang ... ```).
 
 ---
 

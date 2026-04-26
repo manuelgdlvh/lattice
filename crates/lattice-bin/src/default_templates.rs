@@ -32,7 +32,19 @@ pub(crate) fn default_templates(now: Timestamp) -> Vec<Template> {
             label: "Sequence diagrams".into(),
             help: Some("Add one or more diagrams (F3 opens the editor).".into()),
             placeholder: None,
-            required: true,
+            required: false,
+            default: None,
+            show_if: None,
+            validation: Validation::default(),
+            options: FieldOptions { options: vec![] },
+        },
+        Field {
+            id: "code_blocks".into(),
+            kind: FieldKind::CodeBlocks,
+            label: "Code blocks".into(),
+            help: Some("Add one or more named code blocks (F4 opens the editor).".into()),
+            placeholder: None,
+            required: false,
             default: None,
             show_if: None,
             validation: Validation::default(),
@@ -40,19 +52,26 @@ pub(crate) fn default_templates(now: Timestamp) -> Vec<Template> {
         },
     ];
     t.prompt = PromptSpec {
-        template: r#"## Role
+        template: r#"# Role
 You are an autonomous senior engineer working on this repository.
 - Prefer small, correct diffs over large rewrites.
 - Keep changes aligned with existing patterns, naming, and formatting.
 - If there is ambiguity, pick the most reasonable approach and document the assumption in the final delivery.
 
-## Goal
+# Goal
 {{ task.fields.description }}
 
-## Sequence diagrams (source of truth)
+{% if task.fields.diagrams is defined and task.fields.diagrams %}
+# Sequence diagrams (source of truth)
 {{ task.fields.diagrams }}
+{% endif %}
 
-## Working mode (autonomous)
+{% if task.fields.code_blocks is defined and task.fields.code_blocks %}
+# Code blocks
+{{ task.fields.code_blocks }}
+{% endif %}
+
+# Working mode (autonomous)
 - Do not ask the user for feedback or ask intermediate questions; execute end-to-end.
 - Only ask a question if it is **strictly necessary** (blocking) and cannot be safely inferred.
 - Delegate internally: break the goal into steps and carry them out without confirmation.
@@ -60,7 +79,7 @@ You are an autonomous senior engineer working on this repository.
 - Follow repository conventions and avoid introducing technical debt.
 - If you make assumptions, list them explicitly in the final delivery.
 
-## Delivery
+# Delivery
 - Summary of changes and rationale.
 - Concrete test plan (commands to run).
 - Risks / follow-ups if applicable."#

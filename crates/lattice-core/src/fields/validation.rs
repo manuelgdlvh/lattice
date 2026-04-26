@@ -72,7 +72,7 @@ pub fn validate_field(field: &Field, value: Option<&Value>) -> Vec<FieldError> {
     };
 
     match field.kind {
-        FieldKind::Textarea | FieldKind::SequenceGram => {
+        FieldKind::Textarea | FieldKind::SequenceGram | FieldKind::CodeBlocks => {
             validate_string(&field.id, &field.validation, v, &mut out);
         }
         FieldKind::Select => validate_select(field, v, &mut out),
